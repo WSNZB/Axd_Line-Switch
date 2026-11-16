@@ -739,10 +739,12 @@ def parse_line_map(text):
     return m
 
 
-def parse_current_line(output, line_map_text, custom_regex=""):
+def parse_current_line(output, line_map_text, custom_regex="", with_ip=False):
     """从状态命令回显中解析当前生效线路。
     优先用自定义正则(捕获组1)；否则默认解析 0.0.0.0/0 路由行的 NextHop(排除 Direct/127.x)。
-    再经线路映射转换为线路名；无映射时返回原始标识。"""
+    再经线路映射转换为线路名；无映射时返回原始标识。
+    with_ip=True 且命中映射时返回「线路名 (IP)」展示形式（仅用于界面展示，
+    判定比较仍用不带 IP 的规范值）。"""
     ident = None
     if (custom_regex or "").strip():
         try:
@@ -765,7 +767,10 @@ def parse_current_line(output, line_map_text, custom_regex=""):
     if not ident:
         return ""
     lm = parse_line_map(line_map_text)
-    return lm.get(ident, ident)
+    name = lm.get(ident, ident)
+    if with_ip and name != ident:
+        return "%s (%s)" % (name, ident)
+    return name
 
 
 # --------------------------------------------------------------- 执行器 --
@@ -799,15 +804,18 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         sess.connect()
         login_note = "\n".join(sess.log_lines)
         precheck_line = ""
+        precheck_disp = ""
         # 切换前：查询当前生效线路（演练也执行，用于"只看不切"）
         if (dev["status_command"] or "").strip():
             try:
                 out = sess.send_cmd(dev["status_command"].strip())
                 precheck_line = parse_current_line(out, dev["line_map"], dev["current_regex"])
-                login_note += "\n[切换前] 当前生效线路: %s" % (precheck_line or "未识别(见上方回显)")
+                # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
+                precheck_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True)
+                login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
             except Exception as e:
                 login_note += "\n[切换前] 状态查询失败: %s" % e
-        conn.execute("UPDATE exec_logs SET precheck_line=? WHERE id=?", (precheck_line, log_id))
+        conn.execute("UPDATE exec_logs SET precheck_line=? WHERE id=?", (precheck_disp, log_id))
         conn.commit()
         if dry_run:
             return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令", precheck_line, True, ""
@@ -816,8 +824,8 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
             req = [x.strip() for x in require_line.split(",") if x.strip()]
             if req and precheck_line not in req:
                 return (True, "", login_note + "\n[跳过] 当前生效线路为 %s，非故障线路 %s，无需切换"
-                        % (precheck_line, "/".join(req)), precheck_line, True,
-                        "当前生效线路为 %s（非故障线路 %s），无需切换" % (precheck_line, "/".join(req)))
+                        % (precheck_disp or precheck_line, "/".join(req)), precheck_line, True,
+                        "当前生效线路为 %s（非故障线路 %s），无需切换" % (precheck_disp or precheck_line, "/".join(req)))
         main_outs = []
         for i, cmd in enumerate(cmds, 1):
             seq_row = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
@@ -850,7 +858,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 verify_ok = False
                 verr = ("切换命令已下发，但命令回显中未找到期望内容 %s"
                         "（切换前线路: %s，请检查命令块输出或改在验证命令块配置查询命令）"
-                        % (",".join(missing), precheck_line or "未知"))
+                        % (",".join(missing), precheck_disp or precheck_line or "未知"))
         elif verify_cmds or expect_kws:
             vsess = None
             try:
@@ -881,7 +889,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                         verify_ok = False
                         verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
                                 "（切换前线路: %s，可能路由未收敛或切换失败）"
-                                % (",".join(missing), precheck_line or "未知"))
+                                % (",".join(missing), precheck_disp or precheck_line or "未知"))
             except Exception as e:
                 verify_ok = False
                 verr = "验证会话登录失败: %s" % e
@@ -1407,9 +1415,13 @@ class Handler(BaseHTTPRequestHandler):
                     scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
                     out = s.send_cmd(scmd)
                     line = parse_current_line(out, dev["line_map"], dev["current_regex"])
+                    line_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True)
                     s.close()
-                    return {"ok": True, "current_line": line or "未识别",
-                            "command": scmd, "note": s.log_lines, "banner": out[:800]}
+                    note = s.log_lines
+                    if line and line_disp == line and re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", line):
+                        note = note + ["提示: 下一跳 %s 未在线路映射中配置线路名，建议在「线路映射」补充 如 %s=Vodacom" % (line, line)]
+                    return {"ok": True, "current_line": line_disp or "未识别",
+                            "command": scmd, "note": note, "banner": out[:800]}
                 ver = ""
                 try:
                     ver = s.send_cmd("display version")[:500]
@@ -2198,10 +2210,10 @@ function testDeviceById(id){api("POST","/api/devices/"+id+"/test",{}).then(r=>{
 function queryDeviceLine(){const id=$("d_id").value;if(!id)return showToast("请先保存设备",1);
   api("POST","/api/devices/"+id+"/status",{}).then(r=>{
     const o=$("d_test");o.style.display="block";
-    if(r.ok){o.textContent="当前生效线路: "+(r.current_line||"未识别")+"\n查询命令: "+r.command+"\n\n回显:\n"+(r.banner||"")}
+    if(r.ok){o.textContent="当前生效线路: "+(r.current_line||"未识别")+"\n查询命令: "+r.command+((r.note&&r.note.length>1)?"\n\n"+r.note.slice(1).join("\n"):"")+"\n\n回显:\n"+(r.banner||"")}
     else{o.textContent="查询失败: "+(r.error||"")}})}
 function testDeviceByIdStatus(id){api("POST","/api/devices/"+id+"/status",{}).then(r=>{
-  if(r.ok)showToast("当前生效线路: "+(r.current_line||"未识别"));else showToast("查询失败: "+(r.error||""),1)})}
+  if(r.ok){let t="当前生效线路: "+(r.current_line||"未识别");if(r.note&&r.note.length>1)t+="\n"+r.note.slice(1).join("\n");showToast(t)}else showToast("查询失败: "+(r.error||""),1)})}
 
 // ---- 站点 ----
 function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines")]).then(([s,lines])=>{

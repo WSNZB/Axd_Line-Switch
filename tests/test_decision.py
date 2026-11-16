@@ -95,7 +95,10 @@ Destination/Mask    Proto   Pre  Cost   Flags NextHop         Interface
     out4g = out.replace("192.168.130.10", "192.168.130.22")
     assert app.parse_current_line(out4g, lm) == "4G"
     assert app.parse_current_line(out, lm, r"0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)") == "Airtel"
-    print("PASS 场景7 路由表解析当前线路（默认/自定义正则）")
+    # 展示模式：命中映射 → "线路名 (IP)"；未命中 → 原始 IP
+    assert app.parse_current_line(out, lm, with_ip=True) == "Airtel (192.168.130.10)"
+    assert app.parse_current_line(out, "", with_ip=True) == "192.168.130.10"
+    print("PASS 场景7 路由表解析当前线路（默认/自定义正则/展示带IP）")
 
 
 def test_require_line_skip():
