@@ -1,0 +1,159 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""判定逻辑自测：站点线路互斥 + 当前线路条件 + 回显解析。
+运行: python3 tests/test_decision.py
+AIOps 接口用假数据注入，不依赖外网。"""
+import os
+import sys
+import tempfile
+import threading
+
+BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, BASE)
+os.environ["LS_DB"] = tempfile.mktemp(suffix="_test.db")
+import app  # noqa: E402
+
+app.init_db()
+conn = app.get_db()
+conn.execute("INSERT INTO sites(name) VALUES('华刚卢本')")
+conn.execute("INSERT INTO sites(name) VALUES('未配线路站点')")
+for name, kw, pri in [("Airtel", "41.243.21.170,Airtel", 1),
+                      ("Vodacom", "41.243.21.170,Vodacom", 2),
+                      ("4G", "41.243.21.170,4G", 3)]:
+    conn.execute("INSERT INTO lines(site_id,name,alarm_keywords,priority,enabled) VALUES(1,?,?,?,1)",
+                 (name, kw, pri))
+conn.commit()
+
+SITE1 = {"site_id": 1}
+SITE2 = {"site_id": 2}
+T_AIRTEL = "【ICMP中断】41.243.21.170-华刚卢本-Airtel"
+T_VODA = "【ICMP中断】41.243.21.170-华刚卢本-Vodacom"
+
+
+def fake_alarms(titles):
+    app.fetch_aiops_alarms = lambda conn, minutes=30, max_items=300: [
+        {"alarm_title": t, "is_recover": 0} for t in titles]
+
+
+def test_only_fault_line_active():
+    fake_alarms([T_AIRTEL])
+    allow, reason, d = app.judge_site_alarms(conn, T_AIRTEL, SITE1)
+    assert allow, "仅故障线路告警时应放行，实际: %s" % reason
+    assert d["fault_lines"] == ["Airtel"], d
+    assert set(d["active_lines"]) == {"Airtel"}, d
+    print("PASS 场景1 仅故障线路告警 → 放行（故障线路=Airtel）")
+
+
+def test_multi_lines_active():
+    fake_alarms([T_AIRTEL, T_VODA])
+    allow, reason, d = app.judge_site_alarms(conn, T_AIRTEL, SITE1)
+    assert not allow, "两条线路同时告警应拦截"
+    assert "多条线路同时告警" in reason, reason
+    print("PASS 场景2 Airtel+Vodacom 同时告警 → 拦截: %s" % reason)
+
+
+def test_other_line_active():
+    # 只有目标线路 Vodacom 在告警（标题本身不匹配任何线路的场景由场景3覆盖）
+    fake_alarms([T_VODA])
+    allow, reason, d = app.judge_site_alarms(conn, T_AIRTEL, SITE1)
+    assert not allow, "其它线路也在告警时应拦截"
+    assert "其它线路同时告警" in reason, reason
+    print("PASS 场景3 除故障线路外还有线路告警 → 拦截: %s" % reason)
+
+
+def test_title_no_line():
+    fake_alarms([])
+    allow, reason, _ = app.judge_site_alarms(conn, "【ESXi内存延迟过高】hk-esxi28", SITE1)
+    assert not allow and "无法确认故障线路" in reason, reason
+    print("PASS 场景4 标题匹配不到线路 → 拦截: %s" % reason)
+
+
+def test_site_without_lines():
+    allow, reason, d = app.judge_site_alarms(conn, "任意告警", SITE2)
+    assert allow and "未配置线路" in d["note"], d
+    print("PASS 场景5 站点未配置线路 → 放行（不做互斥判定）")
+
+
+def test_aiops_error():
+    def boom(*a, **k):
+        raise RuntimeError("未配置 AIOps Token")
+    app.fetch_aiops_alarms = boom
+    allow, reason, d = app.judge_site_alarms(conn, T_AIRTEL, SITE1)
+    assert allow and "查询失败" in d["note"], d
+    print("PASS 场景6 AIOps 查询失败 → 放行并记录原因（避免完全不动作）")
+
+
+def test_parse_current_line():
+    out = """
+Destination/Mask    Proto   Pre  Cost   Flags NextHop         Interface
+   0.0.0.0/0        BGP     255  3      D    192.168.130.10          GigabitEthernet0/1
+  127.0.0.0/8       Direct  0    0      D    127.0.0.1       InLoop0
+192.168.130.0/24    Direct  0    0      D    192.168.130.5   GigabitEthernet0/1
+"""
+    lm = "192.168.130.2=Vodacom\n192.168.130.10=Airtel\n192.168.130.22=4G"
+    assert app.parse_current_line(out, lm) == "Airtel"
+    out4g = out.replace("192.168.130.10", "192.168.130.22")
+    assert app.parse_current_line(out4g, lm) == "4G"
+    assert app.parse_current_line(out, lm, r"0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)") == "Airtel"
+    print("PASS 场景7 路由表解析当前线路（默认/自定义正则）")
+
+
+def test_require_line_skip():
+    """当前线路 ≠ 故障线路时不下发切换命令（mock 设备验证）"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mockdev", os.path.join(BASE, "tests/mock_telnet.py"))
+    mock = importlib.util.module_from_spec(spec)
+    old_argv = sys.argv
+    sys.argv = ["mock", "12399"]
+    try:
+        spec.loader.exec_module(mock)
+    finally:
+        sys.argv = old_argv
+    srv = mock.Server(("127.0.0.1", 12399), mock.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    conn.execute(
+        "INSERT INTO devices(site_id,name,host,port,protocol,username,password_enc,timeout,"
+        "status_command,line_map,enabled,created_at) VALUES(1,'m','127.0.0.1',12399,'telnet','admin',?,8,"
+        "'display ip routing-table',?,1,'now')",
+        (app.encrypt_pw("Mock@123"),
+         "192.168.130.10=Airtel\n192.168.130.22=4G"))
+    conn.commit()
+    dev = conn.execute("SELECT * FROM devices WHERE id=1").fetchone()
+    cur = conn.execute("INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
+                       "status,source_line,started_at) VALUES(1,'x',1,'m','manual','running','Vodacom','now')")
+    conn.commit()
+    log_id = cur.lastrowid
+    # 设备当前是 Airtel，故障线路是 Vodacom → 应跳过
+    ok, err, note, precheck, verify_ok, skip = app._run_session(
+        dev, conn, log_id, ["sys", "quit"], 0, None, None, require_line="Vodacom")
+    assert skip and "无需切换" in skip, (skip, note)
+    assert precheck == "Airtel", precheck
+    n = conn.execute("SELECT COUNT(*) c FROM exec_steps WHERE log_id=?", (log_id,)).fetchone()["c"]
+    assert n == 0, "跳过时不应下发任何切换命令，实际执行了 %d 条" % n
+    print("PASS 场景8 当前线路(Airtel)≠故障线路(Vodacom) → 不下发命令，直接跳过")
+
+    # 故障线路 = Airtel（当前就是 Airtel）→ 应执行
+    cur2 = conn.execute("INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
+                        "status,source_line,started_at) VALUES(1,'x',1,'m','manual','running','Airtel','now')")
+    conn.commit()
+    log2 = cur2.lastrowid
+    ok, err, note, precheck, verify_ok, skip = app._run_session(
+        dev, conn, log2, ["sys", "quit"], 0, None, None, require_line="Airtel")
+    assert not skip and ok, (skip, err, note)
+    n2 = conn.execute("SELECT COUNT(*) c FROM exec_steps WHERE log_id=?", (log2,)).fetchone()["c"]
+    assert n2 == 2, "应下发 2 条命令，实际 %d" % n2
+    print("PASS 场景9 当前线路(Airtel)=故障线路 → 正常下发 2 条命令")
+    srv.shutdown()
+
+
+if __name__ == "__main__":
+    test_only_fault_line_active()
+    test_multi_lines_active()
+    test_other_line_active()
+    test_title_no_line()
+    test_site_without_lines()
+    test_aiops_error()
+    test_parse_current_line()
+    test_require_line_skip()
+    print("\n全部判定逻辑测试通过")

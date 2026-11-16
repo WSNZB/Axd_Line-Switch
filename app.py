@@ -142,6 +142,16 @@ def init_db():
         remark TEXT DEFAULT '',
         created_at TEXT
     );
+    CREATE TABLE IF NOT EXISTS lines(
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        site_id INTEGER NOT NULL,
+        name TEXT NOT NULL,
+        alarm_keywords TEXT DEFAULT '',
+        priority INTEGER DEFAULT 1,
+        enabled INTEGER DEFAULT 1,
+        remark TEXT DEFAULT '',
+        created_at TEXT
+    );
     CREATE TABLE IF NOT EXISTS actions(
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         site_id INTEGER,
@@ -153,6 +163,7 @@ def init_db():
         rollback_block TEXT DEFAULT '',
         verify_block TEXT DEFAULT '',
         expect_keywords TEXT DEFAULT '',
+        target_line TEXT DEFAULT '',
         cooldown INTEGER DEFAULT 0,
         enabled INTEGER DEFAULT 1,
         remark TEXT DEFAULT '',
@@ -171,6 +182,8 @@ def init_db():
         status TEXT DEFAULT 'running',
         precheck_line TEXT DEFAULT '',
         session_log TEXT DEFAULT '',
+        source_line TEXT DEFAULT '',
+        decision_note TEXT DEFAULT '',
         error TEXT DEFAULT '',
         matched_note TEXT DEFAULT '',
         started_at TEXT,
@@ -198,8 +211,11 @@ def init_db():
         ("devices", "line_map", "TEXT DEFAULT ''"),
         ("actions", "verify_block", "TEXT DEFAULT ''"),
         ("actions", "expect_keywords", "TEXT DEFAULT ''"),
+        ("actions", "target_line", "TEXT DEFAULT ''"),
         ("exec_logs", "precheck_line", "TEXT DEFAULT ''"),
         ("exec_logs", "session_log", "TEXT DEFAULT ''"),
+        ("exec_logs", "source_line", "TEXT DEFAULT ''"),
+        ("exec_logs", "decision_note", "TEXT DEFAULT ''"),
         ("exec_steps", "raw_output", "TEXT DEFAULT ''"),
     ]:
         cols = [r[1] for r in c.execute("PRAGMA table_info(%s)" % tbl)]
@@ -211,7 +227,8 @@ def init_db():
                  ("global_cooldown", "300"),
                  ("continue_on_error", "0"),
                  ("aiops_url", AIOPS_API),
-                 ("aiops_token", AIOPS_TOKEN)]:
+                 ("aiops_token", AIOPS_TOKEN),
+                 ("active_window_min", "30")]:
         c.execute("INSERT OR IGNORE INTO kv(k,v) VALUES(?,?)", (k, v))
     conn.commit()
     conn.close()
@@ -260,6 +277,93 @@ def match_detail(conn, title):
         except re.error as e:
             hits.append({"action": a, "reason": "正则语法错误: %s" % e})
     return hits
+
+
+def fetch_aiops_alarms(conn, minutes=30, max_items=300):
+    """拉取近 N 分钟告警明细（含 is_recover 状态），用于站点线路互斥判定。"""
+    import urllib.parse
+    import urllib.request
+    token = (kv_get(conn, "aiops_token", "") or "").strip()
+    api = (kv_get(conn, "aiops_url", "") or "").strip() or AIOPS_API
+    if not token:
+        raise RuntimeError("未配置 AIOps Token")
+    start = (datetime.now() - timedelta(minutes=int(minutes))).strftime("%Y-%m-%d %H:%M:%S")
+    end = (datetime.now() + timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S")
+    sul = json.dumps([{"attr": "create_time", "search": [start, end], "operator": "="}],
+                     ensure_ascii=False)
+    out, offset = [], 0
+    while offset < max_items:
+        params = {"offset": offset, "limit": min(200, max_items - offset), "search_unit_list": sul}
+        req = urllib.request.Request(api + "?" + urllib.parse.urlencode(params),
+                                     headers={"token": token})
+        with urllib.request.urlopen(req, timeout=20) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        if d.get("code") != 0:
+            raise RuntimeError("AIOps 接口返回错误: %s" % str(d)[:160])
+        items = (d.get("data") or {}).get("list") or []
+        out.extend(items)
+        total = (d.get("data") or {}).get("count")
+        if not items or (total is not None and len(out) >= total):
+            break
+        offset += 200
+    return out
+
+
+def _kw_match(keywords, text):
+    """线路告警关键词匹配：逗号分隔，全部包含(不区分大小写)视为命中。"""
+    words = [w.strip() for w in (keywords or "").split(",") if w.strip()]
+    if not words:
+        return False
+    t = (text or "").lower()
+    return all(w.lower() in t for w in words)
+
+
+def judge_site_alarms(conn, title, action):
+    """站点线路互斥判定。
+    返回 (allow, reason, detail)：
+      - 站点未配线路 → 放行（不做互斥判定）
+      - 站点多条线路同时在告警 → 拦截
+      - 故障线路之外的线路也在告警 → 拦截
+      - 标题未匹配出故障线路 → 拦截（无法确认哪条线路故障）
+    AIOps 查询失败时放行并记录原因，避免因外部接口异常导致完全不动作。"""
+    site_id = action["site_id"]
+    lines = conn.execute("SELECT * FROM lines WHERE site_id=? AND enabled=1 ORDER BY priority,id",
+                         (site_id,)).fetchall()
+    detail = {"fault_lines": [], "active_lines": [], "window_min": 0, "note": ""}
+    if not lines:
+        detail["note"] = "站点未配置线路，未做互斥判定"
+        return True, "", detail
+    window = int(kv_get(conn, "active_window_min", "30") or 30)
+    detail["window_min"] = window
+    fault_lines = [ln["name"] for ln in lines if _kw_match(ln["alarm_keywords"], title)]
+    detail["fault_lines"] = fault_lines
+    if not fault_lines:
+        detail["note"] = "告警标题未匹配到本站点任何线路关键词"
+        return False, ("无法确认故障线路：告警标题未匹配站点下任何线路（%s）"
+                       % "、".join(ln["name"] for ln in lines)), detail
+    try:
+        alarms = fetch_aiops_alarms(conn, window)
+    except Exception as e:
+        detail["note"] = "AIOps 活跃告警查询失败，已放行: %s" % e
+        return True, "", detail
+    active = {}
+    for a in alarms:
+        if a.get("is_recover") == 1:
+            continue
+        t = a.get("alarm_title") or ""
+        for ln in lines:
+            if _kw_match(ln["alarm_keywords"], t):
+                active.setdefault(ln["name"], []).append(t)
+    detail["active_lines"] = list(active.keys())
+    detail["active_detail"] = {k: v[:3] for k, v in active.items()}
+    if len(active) >= 2:
+        return False, ("站点多条线路同时告警（%s），切换无效，不执行"
+                       % "、".join(active.keys())), detail
+    others = [n for n in active if n not in fault_lines]
+    if others:
+        return False, ("其它线路同时告警（%s），不执行切换" % "、".join(others)), detail
+    detail["note"] = "仅故障线路 %s 在告警，允许切换" % "、".join(fault_lines)
+    return True, "", detail
 
 
 def fetch_aiops_titles(conn, days=7, max_items=1000):
@@ -596,9 +700,22 @@ def _dev_lock(device_id):
         return _DEV_LOCKS[device_id]
 
 
-def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=None):
-    """登录设备：查当前线路 → 下发切换命令 → 执行验证命令。
-    返回 (ok, error, 登录过程文本, 切换前当前线路, 验证是否通过)。"""
+def _with_dev_lock(device_id, timeout, fn):
+    """同一设备的会话串行化：切换执行、查线路、连通测试共用一把锁，避免提示符互相打乱。"""
+    lk = _dev_lock(device_id)
+    if not lk.acquire(timeout=timeout):
+        raise RuntimeError("设备正被其它任务占用（等待超过 %ds），请稍后重试" % timeout)
+    try:
+        return fn()
+    finally:
+        lk.release()
+
+
+def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=None,
+                 require_line=""):
+    """登录设备：查当前线路 →（条件满足才）下发切换命令 → 执行验证命令。
+    返回 (ok, error, 登录过程文本, 切换前当前线路, 验证是否通过, 跳过原因)。
+    require_line 非空时：仅当当前生效线路等于该故障线路才下发切换命令。"""
     password = decrypt_pw(dev["password_enc"])
     sess = DeviceSession(dev, password)
     login_note = ""
@@ -617,7 +734,14 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         conn.execute("UPDATE exec_logs SET precheck_line=? WHERE id=?", (precheck_line, log_id))
         conn.commit()
         if dry_run:
-            return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令", precheck_line, True
+            return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令", precheck_line, True, ""
+        # 条件判断：当前生效线路必须是故障线路，否则无需切换
+        if require_line and precheck_line:
+            req = [x.strip() for x in require_line.split(",") if x.strip()]
+            if req and precheck_line not in req:
+                return (True, "", login_note + "\n[跳过] 当前生效线路为 %s，非故障线路 %s，无需切换"
+                        % (precheck_line, "/".join(req)), precheck_line, True,
+                        "当前生效线路为 %s（非故障线路 %s），无需切换" % (precheck_line, "/".join(req)))
         for i, cmd in enumerate(cmds, 1):
             seq_row = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
                                    (log_id,)).fetchone()
@@ -635,7 +759,8 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                          (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
             conn.commit()
             if not ok:
-                return False, "第 %d 条命令失败: %s | %s" % (i, cmd, err), login_note, precheck_line, False
+                return (False, "第 %d 条命令失败: %s | %s" % (i, cmd, err),
+                        login_note, precheck_line, False, "")
         # 切换后验证：用独立会话重新登录执行（切换命令块的 quit 可能已断开会话）
         verify_ok = True
         verr = ""
@@ -679,7 +804,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                     sess.transcript.append(("--", "[验证会话开始：重新登录设备]"))
                     sess.transcript.extend(vsess.transcript)
                     vsess.close()
-        return True, verr, login_note, precheck_line, verify_ok
+        return True, verr, login_note, precheck_line, verify_ok, ""
     finally:
         # 保存完整会话原文（含登录 banner / 每条命令收发 / 验证会话），排障用
         try:
@@ -720,11 +845,16 @@ def execute_action(log_id):
         verify_cmds = parse_block(act["verify_block"]) if not log["rollback"] else []
         expect_kws = [k.strip() for k in (act["expect_keywords"] or "").split(",") if k.strip()]
         try:
-            ok, err, note, precheck_line, verify_ok = _run_session(
-                dev, conn, log_id, cmds, log["dry_run"], verify_cmds, expect_kws)
+            ok, err, note, precheck_line, verify_ok, skip_reason = _with_dev_lock(
+                dev["id"], 180, lambda: _run_session(
+                    dev, conn, log_id, cmds, log["dry_run"], verify_cmds, expect_kws,
+                    require_line=(log["source_line"] or "")))
         except Exception as e:
-            ok, err, note, precheck_line, verify_ok = False, str(e), "", "", False
-        if ok and verify_ok:
+            ok, err, note, precheck_line, verify_ok, skip_reason = False, str(e), "", "", False, ""
+        if skip_reason:
+            status = "skipped"
+            err = skip_reason
+        elif ok and verify_ok:
             status = "success"
         elif ok and not verify_ok:
             status = "verify_failed"
@@ -753,7 +883,8 @@ def _worker():
                 pass
 
 
-def submit_action(conn, action, trigger, title, dry_run=0, rollback=0):
+def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
+                  source_line="", decision_note=""):
     """创建执行记录并入队。返回 (log_id, skip_reason)。冷却/串行判断在此。"""
     dev = conn.execute("SELECT * FROM devices WHERE id=?", (action["device_id"],)).fetchone()
     if not dev:
@@ -776,9 +907,10 @@ def submit_action(conn, action, trigger, title, dry_run=0, rollback=0):
                 pass
     cur = conn.execute(
         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,alarm_title,"
-        "dry_run,rollback,status,precheck_line,started_at) VALUES(?,?,?,?,?,?,?,?, 'running', '', ?)",
+        "dry_run,rollback,status,precheck_line,source_line,decision_note,started_at) "
+        "VALUES(?,?,?,?,?,?,?,?, 'running', '', ?,?,? )",
         (action["id"], action["name"], dev["id"], dev["name"], trigger, title or "",
-         dry_run, rollback, now()))
+         dry_run, rollback, source_line, decision_note, now()))
     conn.commit()
     log_id = cur.lastrowid
     _EXEC_QUEUE.put(log_id)
@@ -869,7 +1001,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"ok": True})
             if path == "/api/config":
                 keys = ["web_password", "api_token", "global_cooldown", "continue_on_error",
-                        "aiops_url", "aiops_token"]
+                        "aiops_url", "aiops_token", "active_window_min"]
                 cfg = {k: kv_get(conn, k) for k in keys}
                 cfg["web_password"] = mask_pw(cfg["web_password"])
                 cfg["aiops_token"] = mask_pw(cfg["aiops_token"])
@@ -894,6 +1026,16 @@ class Handler(BaseHTTPRequestHandler):
                     d["has_password"] = True
                     out.append(d)
                 return self._send_json(out)
+            if path == "/api/lines":
+                sid = (qs.get("site_id") or [None])[0]
+                if sid:
+                    rows = conn.execute("SELECT * FROM lines WHERE site_id=? ORDER BY priority,id",
+                                        (int(sid),)).fetchall()
+                else:
+                    rows = conn.execute(
+                        "SELECT l.*, s.name AS site_name FROM lines l LEFT JOIN sites s ON l.site_id=s.id "
+                        "ORDER BY l.site_id, l.priority, l.id").fetchall()
+                return self._send_json([dict(r) for r in rows])
             if path == "/api/actions":
                 rows = conn.execute(
                     "SELECT a.*, d.name AS device_name, d.protocol, d.host, s.name AS site_name "
@@ -959,20 +1101,43 @@ class Handler(BaseHTTPRequestHandler):
                 hits = match_actions(conn, title)
                 if not hits:
                     return self._send_json({"matched": False, "title": title})
-                act = hits[MATCH_POLICY_FIRST and 0]
+                act = hits[0]
                 dry_run = 1 if str(body.get("dry_run", "")).lower() in ("1", "true", "yes") else 0
-                log_id, skip = submit_action(conn, act, "api", title, dry_run=dry_run)
+                # 站点线路互斥判定：多条线路同时告警 / 无法确认故障线路 → 不切换
+                allow, reason, decision = judge_site_alarms(conn, title, act)
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
-                resp = {"matched": True, "task_id": log_id, "title": title,
+                base = {"matched": True, "title": title,
                         "action": {"id": act["id"], "name": act["name"], "site_id": act["site_id"]},
                         "device": dict(dev) if dev else None,
-                        "matched_total": len(hits)}
+                        "matched_total": len(hits),
+                        "decision": {"allow": allow, "reason": reason,
+                                     "fault_lines": decision.get("fault_lines"),
+                                     "active_lines": decision.get("active_lines"),
+                                     "window_min": decision.get("window_min"),
+                                     "note": decision.get("note")}}
+                if not allow:
+                    # 记录跳过原因，便于排障与统计
+                    cur = conn.execute(
+                        "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
+                        "alarm_title,dry_run,rollback,status,source_line,decision_note,started_at,finished_at) "
+                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,? ,?,?)",
+                        (act["id"], act["name"], act["device_id"], dev["name"] if dev else "",
+                         title, dry_run, ",".join(decision.get("fault_lines") or []),
+                         (reason + " | " + decision.get("note", "")), now(), now()))
+                    conn.commit()
+                    base.update({"task_id": None, "executed": False, "skip_reason": reason,
+                                 "skip_reason_code": "site_alarm_condition"})
+                    return self._send_json(base)
+                log_id, skip = submit_action(conn, act, "api", title, dry_run=dry_run,
+                                             source_line=",".join(decision.get("fault_lines") or []),
+                                             decision_note=decision.get("note", ""))
+                base["task_id"] = log_id
                 if skip:
-                    resp["executed"] = False
-                    resp["skip_reason"] = skip
+                    base["executed"] = False
+                    base["skip_reason"] = skip
                 else:
-                    resp["executed"] = True
-                return self._send_json(resp)
+                    base["executed"] = True
+                return self._send_json(base)
             if path == "/api/logout":
                 return self._send_json({"ok": True}, headers={
                     "Set-Cookie": "%s=deleted; Path=/; Max-Age=0" % WEB_COOKIE})
@@ -992,6 +1157,19 @@ class Handler(BaseHTTPRequestHandler):
             if m2:
                 return self._device_test(conn, int(m2.group(1)),
                                          want_status=(m2.group(2) == "status"))
+            # ---- CRUD: lines ----
+            if path == "/api/lines":
+                name = (body.get("name") or "").strip()
+                if not name or not body.get("site_id"):
+                    return self._send_json({"error": "线路名称与所属站点必填"}, 400)
+                cur = conn.execute(
+                    "INSERT INTO lines(site_id,name,alarm_keywords,priority,enabled,remark,created_at) "
+                    "VALUES(?,?,?,?,?,?,?)",
+                    (int(body["site_id"]), name, body.get("alarm_keywords") or "",
+                     int(body.get("priority") or 1), 1 if body.get("enabled", 1) else 0,
+                     body.get("remark") or "", now()))
+                conn.commit()
+                return self._send_json({"id": cur.lastrowid})
             # ---- CRUD: actions ----
             if path == "/api/actions":
                 return self._crud_action(conn, body, None)
@@ -1009,7 +1187,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"executed": True, "task_id": log_id})
             m4 = re.match(r"^/api/config$", path)
             if m4:
-                for k in ("global_cooldown", "continue_on_error", "api_token", "aiops_url", "aiops_token"):
+                for k in ("global_cooldown", "continue_on_error", "api_token", "aiops_url",
+                          "aiops_token", "active_window_min"):
                     if k in body and body[k] is not None and body[k] != "":
                         kv_set(conn, k, str(body[k]))
                 if body.get("web_password"):
@@ -1107,7 +1286,7 @@ class Handler(BaseHTTPRequestHandler):
         fields = {}
         for k in ("site_id", "name", "device_id", "match_type", "match_keywords",
                   "command_block", "rollback_block", "verify_block", "expect_keywords",
-                  "cooldown", "enabled", "remark"):
+                  "target_line", "cooldown", "enabled", "remark"):
             if k in body:
                 fields[k] = body[k]
         if act_id:
@@ -1129,23 +1308,24 @@ class Handler(BaseHTTPRequestHandler):
         if not dev:
             return self._send_json({"error": "设备不存在"}, 404)
         try:
-            sess = DeviceSession(dev, decrypt_pw(dev["password_enc"]))
-            sess.connect()
-            if want_status:
-                scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
-                out = sess.send_cmd(scmd)
-                line = parse_current_line(out, dev["line_map"], dev["current_regex"])
+            def _do():
+                sess = DeviceSession(dev, decrypt_pw(dev["password_enc"]))
+                sess.connect()
+                if want_status:
+                    scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
+                    out = sess.send_cmd(scmd)
+                    line = parse_current_line(out, dev["line_map"], dev["current_regex"])
+                    sess.close()
+                    return {"ok": True, "current_line": line or "未识别",
+                            "command": scmd, "note": sess.log_lines, "banner": out[:800]}
+                ver = ""
+                try:
+                    ver = sess.send_cmd("display version")[:500]
+                except Exception:
+                    pass
                 sess.close()
-                return self._send_json({"ok": True, "current_line": line or "未识别",
-                                        "command": scmd,
-                                        "note": sess.log_lines, "banner": out[:800]})
-            ver = ""
-            try:
-                ver = sess.send_cmd("display version")[:500]
-            except Exception:
-                pass
-            sess.close()
-            return self._send_json({"ok": True, "note": sess.log_lines, "banner": ver})
+                return {"ok": True, "note": sess.log_lines, "banner": ver}
+            return self._send_json(_with_dev_lock(dev_id, 60, _do))
         except Exception as e:
             return self._send_json({"ok": False, "error": str(e)})
 
@@ -1168,6 +1348,18 @@ class Handler(BaseHTTPRequestHandler):
                                  (body.get("remark") or "", int(m.group(1))))
                 conn.commit()
                 return self._send_json({"ok": True})
+            m = re.match(r"^/api/lines/(\d+)$", path)
+            if m:
+                fields = {}
+                for k in ("name", "alarm_keywords", "priority", "enabled", "remark", "site_id"):
+                    if k in body:
+                        fields[k] = body[k]
+                if fields:
+                    sets = ",".join("%s=?" % k for k in fields)
+                    conn.execute("UPDATE lines SET %s WHERE id=?" % sets,
+                                 list(fields.values()) + [int(m.group(1))])
+                    conn.commit()
+                return self._send_json({"ok": True})
             m = re.match(r"^/api/devices/(\d+)$", path)
             if m:
                 return self._crud_device(conn, body, int(m.group(1)))
@@ -1187,6 +1379,11 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/api/sites/(\d+)$", path)
             if m:
                 conn.execute("DELETE FROM sites WHERE id=?", (int(m.group(1)),))
+                conn.commit()
+                return self._send_json({"ok": True})
+            m = re.match(r"^/api/lines/(\d+)$", path)
+            if m:
+                conn.execute("DELETE FROM lines WHERE id=?", (int(m.group(1)),))
                 conn.commit()
                 return self._send_json({"ok": True})
             m = re.match(r"^/api/devices/(\d+)$", path)
@@ -1250,6 +1447,7 @@ th{color:var(--sub);font-weight:500;white-space:nowrap}
 .tag.success{background:#e6f7ef;color:var(--ok)} .tag.failed{background:#fdeaea;color:var(--bad)}
 .tag.running{background:#eaf1fe;color:var(--pri)} .tag.cooldown{background:#fff7e6;color:var(--warn)}
 .tag.verify_failed{background:#fff0e0;color:#c25a00}
+.tag.skipped{background:#f1efec;color:#6b6b6b}
 .muted{color:var(--sub);font-size:12px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
@@ -1332,8 +1530,9 @@ pre.out .err{color:#ff9c9c}
 
 <div id="p-sites" style="display:none">
   <div class="card">
-    <h3>站点管理 <button class="btn pri sm" style="float:right" onclick="editSite(0)">+ 新建站点</button></h3>
-    <table><thead><tr><th>ID</th><th>站点名称</th><th>备注</th><th>操作</th></tr></thead>
+    <h3>站点管理 <span class="muted">（线路关键词用于判定"故障线路"与"多条线路同时告警"）</span>
+      <button class="btn pri sm" style="float:right" onclick="editSite(0)">+ 新建站点</button></h3>
+    <table><thead><tr><th>ID</th><th>站点名称</th><th>线路</th><th>备注</th><th>操作</th></tr></thead>
     <tbody id="sitetb"></tbody></table>
   </div>
 </div>
@@ -1345,7 +1544,8 @@ pre.out .err{color:#ff9c9c}
     <div class="kv"><label>API Token</label><input id="s_token"><span class="muted">AIOps 回调时带 X-API-Token 请求头</span></div>
     <div class="kv"><label>全局冷却(秒)</label><input id="s_cd" type="number"></div>
     <div class="kv"><label>AIOps 告警接口</label><input id="s_aiops_url"></div>
-    <div class="kv"><label>AIOps Token</label><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放）"></div>
+    <div class="kv"><label>AIOps Token</label><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放/互斥判定）"></div>
+    <div class="kv"><label>活跃告警判定窗口(分钟)</label><input id="s_window" type="number" placeholder="30"><span class="muted">收到告警时，查近 N 分钟内未恢复的告警判断其它线路是否也异常</span></div>
     <div class="muted" style="margin:10px 0">告警回调接口：POST /api/alert，Body: {"title":"告警标题"}，响应含 matched / task_id / skip_reason。</div>
     <button class="btn pri" onclick="saveCfg()">保存设置</button>
   </div>
@@ -1391,10 +1591,13 @@ pre.out .err{color:#ff9c9c}
   <label>验证命令块（可选，切换完成后执行并检查期望内容，如 display ip routing-table）</label>
   <textarea id="a_verify" rows="3" placeholder="display ip routing-table"></textarea>
   <div class="grid2">
+    <div><label>目标线路（切换到哪条，用于日志/判定展示）</label><input id="a_target" placeholder="如 Vodacom"></div>
     <div><label>期望关键词（逗号分隔，须全部出现在验证回显中）</label><input id="a_expect" placeholder="如：192.168.130.2（切到 Vodacom 后 0.0.0.0 的下一跳）"></div>
-    <div><label>冷却时间(秒，0=用全局)</label><input id="a_cd" type="number" value="0"></div>
   </div>
-  <div class="sw"><input type="checkbox" id="a_en" checked><span>启用</span></div>
+  <div class="grid2">
+    <div><label>冷却时间(秒，0=用全局)</label><input id="a_cd" type="number" value="0"></div>
+    <div class="sw" style="margin-top:22px"><input type="checkbox" id="a_en" checked><span>启用</span></div>
+  </div>
   <div class="mfoot">
     <button class="btn" onclick="closeM('mAct')">取消</button>
     <button class="btn warn" onclick="execAction(false)">保存前不执行</button>
@@ -1453,6 +1656,24 @@ pre.out .err{color:#ff9c9c}
   </div>
 </div></div>
 
+<!-- 站点线路 -->
+<div class="modal" id="mLine"><div class="box" style="width:760px">
+  <h3 id="mLineTitle">站点线路</h3>
+  <input type="hidden" id="l_site">
+  <div class="muted" style="margin-bottom:8px">线路关键词用于两个判定：①识别告警说的是哪条线路；②查 AIOps 活跃告警判断"是否多条线路同时告警"。关键词为逗号分隔，全部包含即命中。</div>
+  <table><thead><tr><th>线路名</th><th>告警关键词</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead>
+  <tbody id="ltb"></tbody></table>
+  <div class="grid3" style="margin-top:14px">
+    <div><label>线路名</label><input id="l_name" placeholder="如 Airtel"></div>
+    <div><label>告警关键词(逗号分隔)</label><input id="l_kw" placeholder="如 41.243.21.170,Airtel"></div>
+    <div><label>优先级(1最高)</label><input id="l_pri" type="number" value="1"></div>
+  </div>
+  <div class="mfoot">
+    <button class="btn" onclick="closeM('mLine')">关闭</button>
+    <button class="btn pri" onclick="addLine()">添加线路</button>
+  </div>
+</div></div>
+
 <!-- 日志详情 -->
 <div class="modal" id="mLog"><div class="box">
   <h3 id="mLogTitle">执行详情</h3>
@@ -1495,11 +1716,12 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td>${l.id}</td><td>${esc(l.started_at)}</td><td>${l.trigger=="api"?"API":"手动"}</td>
     <td>${esc(l.alarm_title)||"-"}</td><td>${esc(l.action_name)}</td><td>${esc(l.device_name)}</td>
     <td>${l.dry_run?"演练":(l.rollback?"回切":"切换")}</td>
-    <td><span class="tag ${l.status}">${l.status=="cooldown_skip"?"冷却跳过":(l.status=="verify_failed"?"验证未过":esc(l.status))}</span></td>
+    <td><span class="tag ${l.status}">${l.status=="cooldown_skip"?"冷却跳过":(l.status=="verify_failed"?"验证未过":(l.status=="skipped"?"条件不满足":"")||esc(l.status))}</span></td>
     <td class="muted">${esc(l.error).slice(0,40)}</td></tr>`).join(""):"<tr><td colspan=9 class=muted>暂无记录</td></tr>"})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
-  $("mLogTitle").textContent=`执行详情 #${l.id} · ${l.action_name} · ${l.status=="verify_failed"?"验证未过":l.status}`;
-  let h=`<div class="muted" style="margin-bottom:8px">告警标题: ${esc(l.alarm_title)||"-"} | 切换前当前线路: <b>${esc(l.precheck_line)||"未查询"}</b> | 开始: ${esc(l.started_at)} | 结束: ${esc(l.finished_at)||"-"}</div>`;
+  $("mLogTitle").textContent=`执行详情 #${l.id} · ${l.action_name} · ${l.status=="verify_failed"?"验证未过":(l.status=="skipped"?"条件不满足未切换":l.status)}`;
+  let h=`<div class="muted" style="margin-bottom:8px">告警标题: ${esc(l.alarm_title)||"-"} | 故障线路: <b>${esc(l.source_line)||"-"}</b> | 切换前当前线路: <b>${esc(l.precheck_line)||"未查询"}</b> | 开始: ${esc(l.started_at)} | 结束: ${esc(l.finished_at)||"-"}</div>`;
+  if(l.decision_note)h+=`<div class="muted" style="margin-bottom:8px">判定依据: ${esc(l.decision_note)}</div>`;
   if(l.error)h+=`<div style="color:var(--bad);margin-bottom:8px">错误: ${esc(l.error)}</div>`;
   if(l.matched_note)h+=`<details style="margin-bottom:8px"><summary class="muted">登录过程摘要</summary><pre class="out">${esc(l.matched_note)}</pre></details>`;
   if(l.session_log)h+=`<details style="margin-bottom:8px"><summary class="muted">会话原文（登录 banner + 全部收发，排障用）</summary><pre class="out">${esc(l.session_log)}</pre></details>`;
@@ -1533,7 +1755,7 @@ function editAction(id){const a=DATA.actions.find(x=>x.id==id)||{};
   $("a_device").value=a.device_id||"";$("a_mtype").value=a.match_type||"contains";
   $("a_kw").value=a.match_keywords||"";$("a_cmd").value=a.command_block||"";
   $("a_rb").value=a.rollback_block||"";$("a_verify").value=a.verify_block||"";
-  $("a_expect").value=a.expect_keywords||"";
+  $("a_expect").value=a.expect_keywords||"";$("a_target").value=a.target_line||"";
   $("a_cd").value=a.cooldown||0;$("a_en").checked=!!a.enabled||!a.id;
   $("mActTitle").textContent=a.id?"编辑动作 #"+a.id:"新建动作";$("mAct").classList.add("show")}
 function saveAction(){const b={id:$("a_id").value||null,name:$("a_name").value.trim(),
@@ -1541,6 +1763,7 @@ function saveAction(){const b={id:$("a_id").value||null,name:$("a_name").value.t
   match_type:$("a_mtype").value,match_keywords:$("a_kw").value.trim(),
   command_block:$("a_cmd").value,rollback_block:$("a_rb").value,
   verify_block:$("a_verify").value,expect_keywords:$("a_expect").value.trim(),
+  target_line:$("a_target").value.trim(),
   cooldown:+$("a_cd").value||0,enabled:$("a_en").checked?1:0};
   if(!b.name||!b.device_id||!b.match_keywords){alert("动作名、设备、匹配关键词必填");return}
   api(b.id?"PUT":"POST",b.id?"/api/actions/"+b.id:"/api/actions",b).then(()=>{
@@ -1607,12 +1830,18 @@ function testDeviceByIdStatus(id){api("POST","/api/devices/"+id+"/status",{}).th
   alert(r.ok?("当前生效线路: "+(r.current_line||"未识别")):"查询失败: "+(r.error||""))})}
 
 // ---- 站点 ----
-function loadSites(){api("GET","/api/sites").then(s=>{DATA.sites=s;
-  $("sitetb").innerHTML=s.length?s.map(x=>`<tr>
-    <td>${x.id}</td><td><b>${esc(x.name)}</b></td><td class=muted>${esc(x.remark)}</td>
-    <td><button class="btn sm" onclick="editSite(${x.id})">编辑</button>
-    <button class="btn sm bad" onclick="delSite(${x.id})">删除</button></td></tr>`).join(""):
-    "<tr><td colspan=4 class=muted>暂无站点</td></tr>"})}
+function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines")]).then(([s,lines])=>{
+  DATA.sites=s;DATA.lines=lines;
+  $("sitetb").innerHTML=s.length?s.map(x=>{
+    const ls=lines.filter(l=>l.site_id==x.id);
+    return `<tr>
+    <td>${x.id}</td><td><b>${esc(x.name)}</b></td>
+    <td>${ls.length?ls.map(l=>`<span class="tag success" style="margin-right:4px">${esc(l.name)}</span>`).join(""):'<span class="muted">未配置</span>'}</td>
+    <td class=muted>${esc(x.remark)}</td>
+    <td>      <button class="btn sm" onclick="editSite(${x.id})">编辑</button>
+    <button class="btn sm warn" onclick="manageLines(${x.id},'${esc(x.name)}')">线路</button>
+    <button class="btn sm bad" onclick="delSite(${x.id})">删除</button></td></tr>`}).join(""):
+    "<tr><td colspan=5 class=muted>暂无站点</td></tr>"})}
 function editSite(id){const s=DATA.sites.find(x=>x.id==id)||{};
   $("si_id").value=s.id||"";$("si_name").value=s.name||"";$("si_rm").value=s.remark||"";
   $("mSiteTitle").textContent=s.id?"编辑站点":"新建站点";$("mSite").classList.add("show")}
@@ -1621,12 +1850,33 @@ function saveSite(){const b={id:$("si_id").value||null,name:$("si_name").value.t
   api(b.id?"PUT":"POST",b.id?"/api/sites/"+b.id:"/api/sites",b).then(()=>{closeM("mSite");loadSites()})}
 function delSite(id){if(confirm("确认删除站点 #"+id+"？"))api("DELETE","/api/sites/"+id).then(loadSites)}
 
+// ---- 站点线路（互斥判定依据） ----
+function manageLines(siteId,siteName){$("l_site").value=siteId;
+  $("mLineTitle").textContent="站点线路 · "+siteName;
+  $("l_name").value="";$("l_kw").value="";$("l_pri").value=1;
+  loadLines(siteId);$("mLine").classList.add("show")}
+function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
+  $("ltb").innerHTML=ls.length?ls.map(l=>`<tr>
+    <td><b>${esc(l.name)}</b></td><td class="muted">${esc(l.alarm_keywords)||'(空)'}</td>
+    <td>${l.priority}</td>
+    <td>${l.enabled?'<span class="tag success">启用</span>':'<span class="tag failed">停用</span>'}</td>
+    <td><button class="btn sm bad" onclick="delLine(${l.id})">删除</button></td></tr>`).join(""):
+    "<tr><td colspan=5 class=muted>暂无线路，请添加（如 Airtel / Vodacom / 4G）</td></tr>"})}
+function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
+  alarm_keywords:$("l_kw").value.trim(),priority:+$("l_pri").value||1};
+  if(!b.name)return alert("线路名必填");
+  api("POST","/api/lines",b).then(()=>{$("l_name").value="";$("l_kw").value="";
+    loadLines(b.site_id);loadSites()})}
+function delLine(id){if(!confirm("删除该线路？"))return;
+  api("DELETE","/api/lines/"+id).then(()=>{loadLines(+$("l_site").value);loadSites()})}
+
 // ---- 设置 ----
 function loadCfg(){api("GET","/api/config").then(c=>{
   $("s_pwd").value="";$("s_token").value=c.api_token||"";$("s_cd").value=c.global_cooldown||0;
-  $("s_aiops_url").value=c.aiops_url||"";$("s_aiops_tok").value=""})}
+  $("s_aiops_url").value=c.aiops_url||"";$("s_aiops_tok").value="";
+  $("s_window").value=c.active_window_min||30})}
 function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:+$("s_cd").value||0,
-  aiops_url:$("s_aiops_url").value.trim()};
+  aiops_url:$("s_aiops_url").value.trim(),active_window_min:+$("s_window").value||30};
   if($("s_pwd").value)b.web_password=$("s_pwd").value;
   if($("s_aiops_tok").value)b.aiops_token=$("s_aiops_tok").value.trim();
   api("POST","/api/config",b).then(()=>alert("已保存"))}
