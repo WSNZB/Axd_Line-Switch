@@ -24,11 +24,13 @@ import hashlib
 import hmac
 import json
 import os
+import fcntl
 import pty
 import queue
 import re
 import select
 import socket
+import termios
 import sqlite3
 import subprocess
 import sys
@@ -500,10 +502,22 @@ class DeviceSession(object):
             os.write(self.master_fd, data.encode("utf-8"))
 
     # ---- 登录 ----
+    @staticmethod
+    def _ssh_child_setup():
+        """子进程（fork 后、exec 前）：脱离原会话并把 pty slave 设为控制终端。
+        关键：ssh 读/写密码提示走 /dev/tty（控制终端）而非 stdin/stdout——
+        不做 TIOCSCTTY 时守护进程下 ssh 无法交互输密，认证必然失败
+        （表现即 Permission denied 且会话中无任何密码提示）。"""
+        os.setsid()
+        try:
+            fcntl.ioctl(0, termios.TIOCSCTTY, 0)   # fd 0 = pty slave
+        except OSError:
+            pass
+
     def _open_transport(self):
         """建立 telnet 连接或启动 ssh 子进程。
-        SSH 参数与已验证的 netdevice_config_backup.py 对齐（连接老款华为/H3C 设备）：
-        显式放开旧算法；关闭公钥探测（老设备收到公钥探测常直接断开）；仅密码认证。"""
+        SSH 算法参数与已验证的 netdevice_config_backup.py 对齐（老款华为/H3C 兼容）；
+        认证允许 keyboard-interactive（华为 stelnet 原生方式，提示经 SSH 通道回传）。"""
         if self.kind == "telnet":
             self.sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
             self.sock.setblocking(True)
@@ -523,13 +537,14 @@ class DeviceSession(object):
                "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
                # 关掉公钥探测：老设备 SSH 服务端常在收到公钥探测时直接断开连接
                "-o", "PubkeyAuthentication=no",
-               "-o", "KbdInteractiveAuthentication=no",
-               "-o", "NumberOfPasswordPrompts=1",
-               "-o", "PreferredAuthentications=password"]
+               "-o", "NumberOfPasswordPrompts=2",
+               # 华为/H3C stelnet 原生用 keyboard-interactive（"User Authentication" 提示），
+               # password 方式仅兜底；提示经 SSH 通道回传，由登录循环应答
+               "-o", "PreferredAuthentications=keyboard-interactive,password"]
         cmd += extra
         cmd += ["-p", str(self.port), "-l", self.user or "admin", self.host]
         self.proc = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave,
-                                     close_fds=True, preexec_fn=os.setsid)
+                                     close_fds=True, preexec_fn=self._ssh_child_setup)
         os.close(slave)
 
     def connect(self):
@@ -554,7 +569,11 @@ class DeviceSession(object):
                     self.logged_in = True
                     break
                 if err_re.search(text) and not saw_password:
-                    raise RuntimeError("连接失败: " + tail.strip()[-200:])
+                    extra_hint = ""
+                    if re.search(r"Permission denied", text, re.IGNORECASE):
+                        extra_hint = ("（认证被拒且未出现密码提示：请确认账号密码正确；"
+                                      "若设备仅支持 password 认证请确保服务以可交互方式运行）")
+                    raise RuntimeError("连接失败: " + tail.strip()[-200:] + extra_hint)
                 if self.proc and self.proc.poll() is not None:
                     # ssh 客户端已退出（认证失败/算法协商失败/连接被拒等）
                     raise RuntimeError("SSH 进程已退出(退出码=%s)。设备输出尾部: %s"
