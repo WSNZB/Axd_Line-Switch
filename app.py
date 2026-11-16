@@ -814,6 +814,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 return (True, "", login_note + "\n[跳过] 当前生效线路为 %s，非故障线路 %s，无需切换"
                         % (precheck_line, "/".join(req)), precheck_line, True,
                         "当前生效线路为 %s（非故障线路 %s），无需切换" % (precheck_line, "/".join(req)))
+        main_outs = []
         for i, cmd in enumerate(cmds, 1):
             seq_row = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
                                    (log_id,)).fetchone()
@@ -826,6 +827,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                     ok, err = 0, "设备回显疑似错误: " + out[-200:]
             except Exception as e:
                 ok, err = 0, str(e)
+            main_outs.append(out or "")
             conn.execute("INSERT INTO exec_steps(log_id,seq,command,output,raw_output,ok,ts) "
                          "VALUES(?,?,?,?,?,?,?)",
                          (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
@@ -836,7 +838,16 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         # 切换后验证：用独立会话重新登录执行（切换命令块的 quit 可能已断开会话）
         verify_ok = True
         verr = ""
-        if verify_cmds or expect_kws:
+        if expect_kws and not verify_cmds:
+            # 未配置验证命令块：直接在切换命令的回显中查找期望内容（省去重新登录）
+            vtext = "\n".join(main_outs)
+            missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
+            if missing:
+                verify_ok = False
+                verr = ("切换命令已下发，但命令回显中未找到期望内容 %s"
+                        "（切换前线路: %s，请检查命令块输出或改在验证命令块配置查询命令）"
+                        % (",".join(missing), precheck_line or "未知"))
+        elif verify_cmds or expect_kws:
             vsess = None
             try:
                 vsess = DeviceSession(dev, password)
