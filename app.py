@@ -445,7 +445,6 @@ class DeviceSession(object):
         self.proc = None
         self.master_fd = None
         self.logged_in = False
-        self.compat = False       # SSH 兼容老设备算法模式
         self.log_lines = []      # 登录阶段过程记录
         self.transcript = []     # 完整会话原文 [(方向, 文本), ...] 排障用
         self.login_raw = ""      # 登录阶段原始输出
@@ -502,60 +501,40 @@ class DeviceSession(object):
 
     # ---- 登录 ----
     def _open_transport(self):
-        """建立 telnet 连接或启动 ssh 子进程（self.compat 决定是否用兼容老设备的算法参数）。"""
+        """建立 telnet 连接或启动 ssh 子进程。
+        SSH 参数与已验证的 netdevice_config_backup.py 对齐（连接老款华为/H3C 设备）：
+        显式放开旧算法；关闭公钥探测（老设备收到公钥探测常直接断开）；仅密码认证。"""
         if self.kind == "telnet":
             self.sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
             self.sock.setblocking(True)
             return
         self.master_fd, slave = pty.openpty()
-        cmd = ["ssh", "-o", "StrictHostKeyChecking=no",
+        # 运维逃生口：环境变量追加任意 ssh -o 选项，应对其它协商问题
+        extra = (os.environ.get("SSH_EXTRA_OPTS") or "").strip().split()
+        cmd = ["ssh", "-tt",
+               "-o", "StrictHostKeyChecking=no",
                "-o", "UserKnownHostsFile=/dev/null",
                "-o", "ConnectTimeout=%d" % max(5, self.timeout),
-               "-p", str(self.port), "-l", self.user or "admin", self.host]
-        if self.compat:
-            # 老款华为/H3C 设备常见：新版 OpenSSH 默认禁用 ssh-rsa/旧 KEX/旧 cipher
-            cmd += ["-o", "HostKeyAlgorithms=+ssh-rsa,ssh-dss",
-                    "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
-                    "-o", "KexAlgorithms=+diffie-hellman-group14-sha1,"
-                          "diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1",
-                    "-o", "Ciphers=+aes128-cbc,aes256-cbc,3des-cbc",
-                    "-o", "MACs=+hmac-sha1,hmac-sha1-96"]
+               "-o", "ServerAliveInterval=15",
+               # 兼容老网络设备：新版 OpenSSH 默认禁用旧算法，导致协商失败
+               "-o", "KexAlgorithms=+diffie-hellman-group14-sha1,diffie-hellman-group-exchange-sha1",
+               "-o", "HostKeyAlgorithms=+ssh-rsa",
+               "-o", "Ciphers=+aes128-cbc,aes192-cbc,aes256-cbc",
+               "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
+               # 关掉公钥探测：老设备 SSH 服务端常在收到公钥探测时直接断开连接
+               "-o", "PubkeyAuthentication=no",
+               "-o", "KbdInteractiveAuthentication=no",
+               "-o", "NumberOfPasswordPrompts=1",
+               "-o", "PreferredAuthentications=password"]
+        cmd += extra
+        cmd += ["-p", str(self.port), "-l", self.user or "admin", self.host]
         self.proc = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave,
                                      close_fds=True, preexec_fn=os.setsid)
         os.close(slave)
 
-    def _cleanup_transport(self):
-        try:
-            if self.proc:
-                self.proc.terminate()
-        except Exception:
-            pass
-        try:
-            if self.master_fd:
-                os.close(self.master_fd)
-        except Exception:
-            pass
-        self.proc = None
-        self.master_fd = None
-        self.buf = b""
-
     def connect(self):
         self._open_transport()
-        try:
-            self._login()
-        except RuntimeError as e:
-            # SSH 算法协商失败（老设备 vs 新客户端）→ 自动用兼容参数重试一次
-            msg = str(e)
-            if (self.kind == "ssh" and not self.compat
-                    and re.search(r"(Unable to negotiate|no matching (key exchange|cipher|MAC|host key)|"
-                                  r"ssh-rsa|dh_key|kex)", msg, re.IGNORECASE)):
-                self._cleanup_transport()
-                self.compat = True
-                self.transcript.append(("--", "[兼容模式] 首次连接失败（%s），改用兼容老设备的算法参数重试" % msg[:120]))
-                self._open_transport()
-                self._login()
-            else:
-                raise
+        self._login()
 
     def _login(self):
         login_re = re.compile(r"(ogin:|sername:|user name:)", re.IGNORECASE)
