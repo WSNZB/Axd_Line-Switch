@@ -63,6 +63,19 @@ def now():
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _git_version():
+    try:
+        r = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=BASE_DIR,
+                           capture_output=True, text=True, timeout=5)
+        return r.stdout.strip() if r.returncode == 0 else "unknown"
+    except Exception:
+        return "unknown"
+
+
+VERSION = _git_version()
+STARTED_AT = now()
+
+
 # --------------------------------------------------------------- 加密 ----
 def _derive_key():
     return hashlib.pbkdf2_hmac("sha256", LS_SECRET.encode(), b"axd-line-switch-salt", 20000)
@@ -1068,7 +1081,9 @@ class Handler(BaseHTTPRequestHandler):
                 ok = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='success'").fetchone()["c"]
                 failed = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='failed'").fetchone()["c"]
                 running = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='running'").fetchone()["c"]
-                return self._send_json({"total": total, "success": ok, "failed": failed, "running": running})
+                return self._send_json({"total": total, "success": ok, "failed": failed,
+                                        "running": running, "version": VERSION,
+                                        "started_at": STARTED_AT})
             if path == "/api/sites":
                 rows = conn.execute("SELECT * FROM sites ORDER BY id").fetchall()
                 return self._send_json([dict(r) for r in rows])
@@ -1364,27 +1379,38 @@ class Handler(BaseHTTPRequestHandler):
         dev = conn.execute("SELECT * FROM devices WHERE id=?", (dev_id,)).fetchone()
         if not dev:
             return self._send_json({"error": "设备不存在"}, 404)
+        sess = None
         try:
             def _do():
-                sess = DeviceSession(dev, decrypt_pw(dev["password_enc"]))
-                sess.connect()
+                nonlocal sess
+                s = DeviceSession(dev, decrypt_pw(dev["password_enc"]))
+                sess = s
+                s.connect()
                 if want_status:
                     scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
-                    out = sess.send_cmd(scmd)
+                    out = s.send_cmd(scmd)
                     line = parse_current_line(out, dev["line_map"], dev["current_regex"])
-                    sess.close()
+                    s.close()
                     return {"ok": True, "current_line": line or "未识别",
-                            "command": scmd, "note": sess.log_lines, "banner": out[:800]}
+                            "command": scmd, "note": s.log_lines, "banner": out[:800]}
                 ver = ""
                 try:
-                    ver = sess.send_cmd("display version")[:500]
+                    ver = s.send_cmd("display version")[:500]
                 except Exception:
                     pass
-                sess.close()
-                return {"ok": True, "note": sess.log_lines, "banner": ver}
+                s.close()
+                return {"ok": True, "note": s.log_lines, "banner": ver}
             return self._send_json(_with_dev_lock(dev_id, 60, _do))
         except Exception as e:
-            return self._send_json({"ok": False, "error": str(e)})
+            # 失败时附带会话原文尾部（ssh 全过程），便于判断到底卡在哪一步
+            tail = ""
+            if sess is not None:
+                try:
+                    raw = sess.login_raw or "\n".join(t for _, t in sess.transcript)
+                    tail = raw[-600:]
+                except Exception:
+                    tail = ""
+            return self._send_json({"ok": False, "error": str(e), "session_tail": tail})
 
     # ---- PUT/DELETE ----
     def do_PUT(self):
@@ -1532,7 +1558,7 @@ pre.out .err{color:#ff9c9c}
 </head>
 <body>
 <div class="topbar">
-  <h1>Axd_Line_Switch</h1>
+  <h1>Axd_Line_Switch <span class="muted" id="ver" style="font-size:11px;font-weight:400"></span></h1>
   <div class="tabs" id="tabs">
     <button data-p="dash" class="on">执行记录</button>
     <button data-p="actions">切换动作</button>
@@ -1766,6 +1792,7 @@ function refresh(p){
 
 // ---- 仪表盘 ----
 function loadStats(){api("GET","/api/stats").then(s=>{
+  $("ver").textContent="v"+(s.version||"?")+" · "+(s.started_at||"");
   $("stat").innerHTML=["total|总执行","success|成功","failed|失败","running|执行中"].map(x=>{
     const [k,l]=x.split("|");return `<div class="it"><b>${s[k]}</b><span>${l}</span></div>`}).join("")})}
 function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
@@ -1871,13 +1898,14 @@ function saveDevice(){const b=devBody();
     closeM("mDev");loadDevices()})}
 function delDevice(id){if(confirm("确认删除设备 #"+id+"？"))api("DELETE","/api/devices/"+id).then(loadDevices)}
 function _showTest(r,el){const o=$(el);o.style.display="block";
-  o.textContent=r.ok?("连接成功 ✓\n"+(r.note||[]).join("\n")+(r.banner?"\n"+r.banner:"")):("失败 ✗\n"+(r.error||""))}
+  o.textContent=r.ok?("连接成功 ✓\n"+(r.note||[]).join("\n")+(r.banner?"\n"+r.banner:""))
+    :("失败 ✗\n"+(r.error||"")+(r.session_tail?"\n\n--- ssh 会话尾部 ---\n"+r.session_tail:""))}
 function testDevice(){const b=devBody();
   if(b.id){api("POST","/api/devices/"+b.id+"/test",{}).then(r=>_showTest(r,"d_test"))}
   else{api("POST","/api/devices",b).then(r=>{b.id=r.id;$("d_id").value=r.id;
     api("POST","/api/devices/"+r.id+"/test",{}).then(t=>_showTest(t,"d_test"))})}}
 function testDeviceById(id){api("POST","/api/devices/"+id+"/test",{}).then(r=>{
-  alert(r.ok?"连接成功 ✓":"连接失败: "+(r.error||""))})}
+  alert(r.ok?"连接成功 ✓":("连接失败: "+(r.error||"")+(r.session_tail?("\n\n--- ssh 会话尾部 ---\n"+r.session_tail):"")))})}
 function queryDeviceLine(){const id=$("d_id").value;if(!id)return alert("请先保存设备");
   api("POST","/api/devices/"+id+"/status",{}).then(r=>{
     const o=$("d_test");o.style.display="block";
@@ -1979,7 +2007,8 @@ def main():
     init_db()
     threading.Thread(target=_worker, daemon=True).start()
     server = ThreadingHTTPServer((LS_BIND, LS_PORT), Handler)
-    print("[%s] Axd_Line_Switch 启动: http://%s:%d  db=%s" % (now(), LS_BIND, LS_PORT, LS_DB))
+    print("[%s] Axd_Line_Switch 启动: http://%s:%d  db=%s  版本=%s"
+          % (now(), LS_BIND, LS_PORT, LS_DB, VERSION))
     try:
         server.serve_forever()
     except KeyboardInterrupt:
