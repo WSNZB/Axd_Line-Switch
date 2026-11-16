@@ -1522,7 +1522,7 @@ PAGE_HTML = r"""
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Axd_Line_Switch - 控制台</title>
+<title>线路切换平台 - 控制台</title>
 <style>
 /* ============ 企业级后台视觉（参考 slate + indigo 规范） ============ */
 :root{
@@ -1680,6 +1680,34 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 /* ============ 终端输出 ============ */
 pre.out{background:#0f172a;color:#cbd5e1;padding:14px 16px;border-radius:8px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.65;overflow:auto;max-height:280px;white-space:pre-wrap;border:1px solid #1e293b}
 pre.out .err{color:#fca5a5}
+
+/* ---- 执行详情：结构化元数据 / 折叠面板 / 终端窗口（参考稿样式） ---- */
+.meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;background:#f8fafc;padding:16px;border-radius:8px;border:1px solid var(--border);margin-bottom:20px}
+.meta-item{display:flex;flex-direction:column;gap:4px}
+.meta-label{font-size:12px;color:var(--text-muted)}
+.meta-value{font-size:14px;font-weight:500;color:var(--text-main);word-break:break-all}
+.meta-value.title{color:var(--primary);font-weight:600}
+.accordion{border:1px solid var(--border);border-radius:8px;overflow:hidden;margin-bottom:16px;background:#fff}
+.accordion-header{padding:14px 16px;background:#fff;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;transition:background .2s;font-size:14px;font-weight:500;color:var(--text-main)}
+.accordion-header:hover{background:#f8fafc}
+.accordion-header svg{width:16px;height:16px;color:var(--text-muted);transition:transform .3s ease;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.accordion.open .accordion-header svg{transform:rotate(180deg)}
+.accordion-content{max-height:0;overflow:hidden;transition:max-height .3s ease-out;background:#fff}
+.accordion.open .accordion-content{max-height:4000px;transition:max-height .5s ease-in}
+.accordion-content .plain{padding:16px;border-top:1px solid var(--border);font-size:13px;color:var(--text-muted);white-space:pre-wrap;line-height:1.7;word-break:break-all}
+.terminal-wrapper{padding:16px;border-top:1px solid var(--border)}
+.command-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+.tag-ok{background:var(--success-bg);color:var(--success);border:1px solid #a7f3d0;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}
+.tag-fail{background:var(--danger-bg);color:var(--danger);border:1px solid #fecaca;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}
+.command-text{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--text-main);font-weight:500;background:#f1f5f9;padding:2px 8px;border-radius:4px;word-break:break-all}
+.terminal-window{background:#0f172a;border-radius:8px;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(255,255,255,.05)}
+.terminal-header{background:#1e293b;padding:10px 16px;display:flex;align-items:center;border-bottom:1px solid #334155}
+.mac-dots{display:flex;gap:6px}
+.dot{width:10px;height:10px;border-radius:50%}
+.dot.red{background:#ef4444}.dot.yellow{background:#f59e0b}.dot.green{background:#10b981}
+.terminal-title{margin-left:16px;font-size:11px;color:#94a3b8}
+.terminal-body{padding:16px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;color:#e2e8f0;overflow:auto;max-height:320px;white-space:pre-wrap;word-break:break-all}
+.err-banner{margin-bottom:0}
 details{margin:8px 0}
 details summary{cursor:pointer;color:var(--text-muted);font-size:12.5px;padding:4px 0;outline:none}
 details summary:hover{color:var(--primary)}
@@ -1731,7 +1759,7 @@ details summary:hover{color:var(--primary)}
 <aside class="sidebar">
   <div class="sidebar-header">
     <div class="logo-icon">A</div>
-    <div class="logo-text"><h1>Axd_Line_Switch</h1><p>告警驱动 · 线路自动切换</p></div>
+    <div class="logo-text"><h1>线路切换平台</h1><p>告警驱动 · 线路自动切换</p></div>
   </div>
   <div class="nav-group"><div class="nav-title">监控</div>
     <button class="nav-item active" data-p="dash"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg><span>执行记录</span></button></div>
@@ -1857,7 +1885,7 @@ details summary:hover{color:var(--primary)}
 <div class="login" id="loginBox">
   <div class="box">
     <div class="lg-logo">A</div>
-    <h3>Axd_Line_Switch</h3>
+    <h3>线路切换平台</h3>
     <div class="ls">告警驱动 · 线路自动切换控制台</div>
     <input type="password" id="lg_pwd" placeholder="Web 登录密码" onkeydown="if(event.key=='Enter')doLogin()">
     <button class="btn btn-primary" onclick="doLogin()">登 录</button>
@@ -1983,7 +2011,7 @@ details summary:hover{color:var(--primary)}
 </div></div>
 
 <!-- 日志详情 -->
-<div class="modal" id="mLog"><div class="box">
+<div class="modal" id="mLog"><div class="box" style="width:900px">
   <div class="mhd"><h3 id="mLogTitle">执行详情</h3><button class="mx" onclick="closeM('mLog')">✕</button></div>
   <div class="mbd" id="mLogBody"></div>
   <div class="mfoot"><button class="btn btn-secondary" onclick="closeM('mLog')">关闭</button></div>
@@ -2036,7 +2064,7 @@ const STAT=[
  ["failed","失败","#ef4444","#fee2e2",'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>'],
  ["running","执行中","#f59e0b","#fef3c7",'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>']];
 function loadStats(){api("GET","/api/stats").then(s=>{
-  $("ver").textContent=s.version+" 启动于 "+(s.started_at||"");
+  $("ver").textContent=s.version;
   $("stat").innerHTML=STAT.map(x=>`<div class="stat-card">
     <div class="stat-ic" style="background:${x[3]};color:${x[2]}"><svg viewBox="0 0 24 24">${x[4]}</svg></div>
     <div><b>${s[x[0]]}</b><span>${x[1]}</span></div></div>`).join("")})}
@@ -2054,16 +2082,31 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
     <td><span class="err-text">${esc(l.error).slice(0,40)}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
-  $("mLogTitle").textContent=`执行详情 #${l.id} · ${l.action_name} · ${(ST_TAG[l.status]||[l.status])[0]}`;
-  let h=`<div class="log-meta"><span>告警标题 <b>${esc(l.alarm_title)||"-"}</b></span><span>故障线路 <b>${esc(l.source_line)||"-"}</b></span><span>切换前当前线路 <b>${esc(l.precheck_line)||"未查询"}</b></span><span>开始 <b>${esc(l.started_at)}</b></span><span>结束 <b>${esc(l.finished_at)||"-"}</b></span></div>`;
-  if(l.decision_note)h+=`<div class="hint">判定依据：${esc(l.decision_note)}</div>`;
+  $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
+  const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
+  const term=(title,text,open)=>`<div class="accordion${open?" open":""}"><div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">${title}${ARROW}</div><div class="accordion-content"><div class="plain">${esc(text)}</div></div></div>`;
+  let h=`<div class="meta-grid">
+    <div class="meta-item"><span class="meta-label">告警标题</span><span class="meta-value title">${esc(l.alarm_title)||"-"}</span></div>
+    <div class="meta-item"><span class="meta-label">故障线路</span><span class="meta-value">${esc(l.source_line)||"-"}</span></div>
+    <div class="meta-item"><span class="meta-label">切换前当前线路</span><span class="meta-value">${esc(l.precheck_line)||"未查询"}</span></div>
+    <div class="meta-item"><span class="meta-label">开始时间</span><span class="meta-value">${esc(l.started_at)}</span></div>
+    <div class="meta-item"><span class="meta-label">结束时间</span><span class="meta-value">${esc(l.finished_at)||"-"}</span></div>
+    <div class="meta-item"><span class="meta-label">设备</span><span class="meta-value">${esc(l.device_name)||"-"}</span></div>
+  </div>`;
+  if(l.decision_note)h+=`<div class="hint" style="margin-bottom:16px">判定依据：${esc(l.decision_note)}</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
-  if(l.matched_note)h+=`<details style="margin-bottom:8px"><summary>登录过程摘要</summary><pre class="out">${esc(l.matched_note)}</pre></details>`;
-  if(l.session_log)h+=`<details style="margin-bottom:8px"><summary>会话原文（登录 banner + 全部收发，排障用）</summary><pre class="out">${esc(l.session_log)}</pre></details>`;
-  h+=(l.steps||[]).map(s=>`<div class="step"><div class="sh"><span class="tag ${s.ok?"ok":"bad"}">${s.ok?"OK":"FAIL"}</span>
-     <code>${esc(s.command)}</code></div>
-     <pre class="out ${s.ok?"":"err"}" style="margin-top:8px">${esc(s.output)||"(无回显)"}</pre>
-     ${(s.raw_output&&s.raw_output!==s.output)?`<details><summary>原始回显（含命令回显与提示符）</summary><pre class="out">${esc(s.raw_output)}</pre></details>`:""}</div>`).join("");
+  if(l.matched_note)h+=term("登录过程摘要",l.matched_note,false);
+  if(l.session_log)h+=term("会话原文（登录 banner + 全部收发，排障用）",l.session_log,false);
+  h+=(l.steps||[]).map(s=>`<div class="accordion${s.ok?"":" open"}">
+    <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
+      <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="${s.ok?"tag-ok":"tag-fail"}">${s.ok?"OK":"FAIL"}</span><span class="command-text">${esc(s.command)}</span></span>${ARROW}</div>
+    <div class="accordion-content"><div class="terminal-wrapper" style="padding-top:0;border-top:none">
+      <div class="terminal-window">
+        <div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">Router Output</span></div>
+        <div class="terminal-body ${s.ok?"":"err"}">${esc(s.output)||"(无回显)"}</div>
+      </div>
+      ${(s.raw_output&&s.raw_output!==s.output)?`<div style="margin-top:12px"><div class="accordion"><div class="accordion-header" onclick="this.parentElement.classList.toggle('open')" style="font-size:13px;color:var(--text-muted)">原始回显（含命令回显与提示符）</div><div class="accordion-content"><div class="plain">${esc(s.raw_output)}</div></div></div></div>`:""}
+    </div></div></div>`).join("");
   $("mLogBody").innerHTML=h;$("mLog").classList.add("show")})}
 
 // ---- 动作 ----
