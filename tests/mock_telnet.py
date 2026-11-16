@@ -3,12 +3,14 @@
 """模拟华为 VRP 设备的 telnet 服务端，用于本地端到端验证执行链路。
 行为：telnet 协商 → Login:/Password: → <MockSW> 提示符；
 带状态模拟：display ip routing-table 的 0.0.0.0/0 下一跳随切换命令变化，
-display current-configuration 显示当前挂 route-policy import 的 peer。"""
+display current-configuration 显示当前挂 route-policy import 的 peer。
+可选第 2 参数：密码提示文本（模拟华为 stelnet 的 "User Authentication"）。"""
 import socket
 import socketserver
 import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 12345
+PWD_PROMPT = sys.argv[2] if len(sys.argv) > 2 else "Password:"
 USER = "admin"
 PASS = "Mock@123"
 PROMPT = "<MockSW>"
@@ -43,7 +45,7 @@ class Handler(socketserver.BaseRequestHandler):
         if recv_line() != USER:
             send("Error: invalid user\r\n")
             return
-        send("Password:")
+        send(PWD_PROMPT)
         if recv_line() != PASS:
             send("Error: wrong password\r\n")
             return

@@ -559,7 +559,8 @@ class DeviceSession(object):
 
     def _login(self):
         login_re = re.compile(r"(ogin:|sername:|user name:)", re.IGNORECASE)
-        passwd_re = re.compile(r"assword:", re.IGNORECASE)
+        # 华为/H3C 设备 SSH(stelnet) 的密码提示是 "User Authentication"（非标准 Password:）
+        passwd_re = re.compile(r"(assword:|User Authentication)", re.IGNORECASE)
         yes_re = re.compile(r"yes/no", re.IGNORECASE)
         err_re = re.compile(r"( refused|timed out|unreachable|failed|denied|错误|失败)", re.IGNORECASE)
         prompt_re = self.prompt_re

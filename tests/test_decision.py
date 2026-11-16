@@ -147,6 +147,37 @@ def test_require_line_skip():
     srv.shutdown()
 
 
+def test_huawei_stelnet_prompt():
+    """华为 stelnet 的密码提示是 'User Authentication'（非 Password:），登录逻辑须兼容。"""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("mockdev2", os.path.join(BASE, "tests/mock_telnet.py"))
+    mock = importlib.util.module_from_spec(spec)
+    old_argv = sys.argv
+    sys.argv = ["mock", "12398", "User Authentication"]
+    try:
+        spec.loader.exec_module(mock)
+    finally:
+        sys.argv = old_argv
+    srv = mock.Server(("127.0.0.1", 12398), mock.Handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+
+    conn.execute(
+        "INSERT INTO devices(site_id,name,host,port,protocol,username,password_enc,timeout,enabled,created_at) "
+        "VALUES(2,'huawei-ssh','127.0.0.1',12398,'telnet','admin',?,8,1,'now')",
+        (app.encrypt_pw("Mock@123"),))
+    conn.commit()
+    dev = conn.execute("SELECT * FROM devices WHERE name='huawei-ssh'").fetchone()
+    cur = conn.execute("INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
+                       "status,started_at) VALUES(1,'x',?, 'huawei-ssh','manual','running','now')",
+                       (dev["id"],))
+    conn.commit()
+    ok, err, note, precheck, verify_ok, skip = app._run_session(
+        dev, conn, cur.lastrowid, ["display version"], 0, None, None)
+    assert ok and not skip, (ok, skip, err, note)
+    print("PASS 场景10 华为 stelnet 密码提示(User Authentication) 登录并执行命令")
+    srv.shutdown()
+
+
 if __name__ == "__main__":
     test_only_fault_line_active()
     test_multi_lines_active()
@@ -156,4 +187,5 @@ if __name__ == "__main__":
     test_aiops_error()
     test_parse_current_line()
     test_require_line_skip()
+    test_huawei_stelnet_prompt()
     print("\n全部判定逻辑测试通过")
