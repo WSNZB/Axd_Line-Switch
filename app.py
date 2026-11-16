@@ -740,10 +740,11 @@ def parse_line_map(text):
     return m
 
 
-def parse_current_line(output, line_map_text, custom_regex="", with_ip=False):
+def parse_current_line(output, line_map_text, custom_regex="", with_ip=False, extra_map=None):
     """从状态命令回显中解析当前生效线路。
     优先用自定义正则(捕获组1)；否则默认解析 0.0.0.0/0 路由行的 NextHop(排除 Direct/127.x)。
     再经线路映射转换为线路名；无映射时返回原始标识。
+    extra_map: 补充映射（如站点线路关键词中的 IP→线路名），优先级低于设备线路映射。
     with_ip=True 且命中映射时返回「线路名 (IP)」展示形式（仅用于界面展示，
     判定比较仍用不带 IP 的规范值）。"""
     ident = None
@@ -768,10 +769,28 @@ def parse_current_line(output, line_map_text, custom_regex="", with_ip=False):
     if not ident:
         return ""
     lm = parse_line_map(line_map_text)
+    if extra_map:
+        for k, v in extra_map.items():
+            lm.setdefault(k, v)
     name = lm.get(ident, ident)
     if with_ip and name != ident:
         return "%s (%s)" % (name, ident)
     return name
+
+
+def site_line_ip_map(conn, site_id):
+    """站点线路的告警关键词中出现的 IP → 线路名，作为设备线路映射的自动回退。
+    用户在「站点线路」里把下一跳 IP 填为关键词时，无需在设备里重复配置线路映射。"""
+    m = {}
+    if not site_id:
+        return m
+    for ln in conn.execute("SELECT name,alarm_keywords FROM lines WHERE site_id=? AND enabled=1",
+                           (site_id,)).fetchall():
+        for w in (ln["alarm_keywords"] or "").split(","):
+            w = w.strip()
+            if re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", w):
+                m.setdefault(w, ln["name"])
+    return m
 
 
 # --------------------------------------------------------------- 执行器 --
@@ -814,9 +833,10 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
             tl_append(conn, log_id, "查询当前生效线路：执行 %s" % dev["status_command"].strip())
             try:
                 out = sess.send_cmd(dev["status_command"].strip())
-                precheck_line = parse_current_line(out, dev["line_map"], dev["current_regex"])
+                emap = site_line_ip_map(conn, dev["site_id"])
+                precheck_line = parse_current_line(out, dev["line_map"], dev["current_regex"], extra_map=emap)
                 # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
-                precheck_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True)
+                precheck_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True, extra_map=emap)
                 login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
                 tl_append(conn, log_id, "当前生效线路: %s" % (precheck_disp or "未识别(见步骤回显)"))
             except Exception as e:
@@ -1496,12 +1516,14 @@ class Handler(BaseHTTPRequestHandler):
                 if want_status:
                     scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
                     out = s.send_cmd(scmd)
-                    line = parse_current_line(out, dev["line_map"], dev["current_regex"])
-                    line_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True)
+                    emap = site_line_ip_map(conn, dev["site_id"])
+                    line = parse_current_line(out, dev["line_map"], dev["current_regex"], extra_map=emap)
+                    line_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True, extra_map=emap)
                     s.close()
                     note = s.log_lines
                     if line and line_disp == line and re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", line):
-                        note = note + ["提示: 下一跳 %s 未在线路映射中配置线路名，建议在「线路映射」补充 如 %s=Vodacom" % (line, line)]
+                        note = note + ["提示: 下一跳 %s 未匹配到线路名——可在设备编辑的「线路映射」补一行 %s=线路名，"
+                                       "或在该站点的「站点线路」告警关键词中加入该 IP" % (line, line)]
                     return {"ok": True, "current_line": line_disp or "未识别",
                             "command": scmd, "note": note, "banner": out[:800]}
                 ver = ""
@@ -2065,7 +2087,7 @@ details summary:hover{color:var(--primary)}
     <div><label>状态查询命令(查当前生效线路)</label><input id="d_scmd" value="display ip routing-table" placeholder="留空则用 display ip routing-table"></div>
     <div><label>当前线路正则(空=默认解析 0.0.0.0/0 下一跳)</label><input id="d_cregex" placeholder="如: 0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)"></div>
   </div>
-  <label>线路映射（每行一条：下一跳IP=线路名，# 注释）</label>
+  <label>线路映射（下一跳IP=线路名，每行一条，# 注释）<span class="q" title="把设备路由表里 0.0.0.0/0 的下一跳 IP 对应到线路名。若该设备所属站点已在「站点线路」的告警关键词里填了该 IP，会自动识别，无需在此重复配置。">?</span></label>
   <textarea id="d_lmap" rows="4" placeholder="192.168.130.2=Vodacom&#10;192.168.130.10=Airtel&#10;192.168.130.22=4G"></textarea>
   <label class="sw"><input type="checkbox" id="d_en" checked><span>启用该设备</span></label>
   <pre class="out" id="d_test" style="display:none;margin-top:12px"></pre>
@@ -2137,7 +2159,7 @@ function showToast(msg,isError){
   t.innerHTML='<div class="ti" style="color:'+(isError?"var(--danger)":"var(--success)")+'">'+(isError?"✕":"✓")+'</div><div>'+esc(msg)+'</div>';
   $("toast-container").appendChild(t);
   setTimeout(()=>t.classList.add("show"),10);
-  setTimeout(()=>{t.classList.remove("show");setTimeout(()=>t.remove(),350)},isError?4200:2400)}
+  setTimeout(()=>{t.classList.remove("show");setTimeout(()=>t.remove(),350)},isError?9000:6000)}
 
 // ---- 登录 ----
 function doLogin(){api("POST","/api/login",{password:$("lg_pwd").value}).then(()=>{
