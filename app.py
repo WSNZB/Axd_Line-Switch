@@ -35,7 +35,7 @@ import sys
 import threading
 import time
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 
 # --------------------------------------------------------------- 配置 ----
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -46,6 +46,10 @@ LS_SECRET = (os.environ.get("LS_SECRET") or "axd-line-switch-default-secret").st
 
 DEFAULT_PROMPT = r'[<\[][\w\-.:/@]+[>\]]\s*$'   # 华为/H3C 默认提示符
 MATCH_POLICY_FIRST = "first"                     # 多命中策略：只执行第一个
+
+# AIOps 告警接口（用于"匹配预检/回放"，可选功能）
+AIOPS_API = os.environ.get("AIOPS_API") or "https://aiops.livecom.ltd/api/monitor/alarm/search"
+AIOPS_TOKEN = os.environ.get("AIOPS_TOKEN") or ""
 
 _DB_LOCK = threading.Lock()
 _EXEC_QUEUE = queue.Queue()
@@ -183,7 +187,9 @@ def init_db():
     for k, v in [("web_password", "admin123"),
                  ("api_token", "lsk-" + uuid.uuid4().hex[:24]),
                  ("global_cooldown", "300"),
-                 ("continue_on_error", "0")]:
+                 ("continue_on_error", "0"),
+                 ("aiops_url", AIOPS_API),
+                 ("aiops_token", AIOPS_TOKEN)]:
         c.execute("INSERT OR IGNORE INTO kv(k,v) VALUES(?,?)", (k, v))
     conn.commit()
     conn.close()
@@ -208,6 +214,11 @@ def kv_set(conn, key, value):
 # --------------------------------------------------------------- 匹配 ----
 def match_actions(conn, title):
     """返回 (命中的动作列表)。contains: 逗号分隔关键词全部包含(不区分大小写)；regex: re.search。"""
+    return [m["action"] for m in match_detail(conn, title)]
+
+
+def match_detail(conn, title):
+    """返回命中明细 [{'action': Row, 'reason': '...'}]，reason 说明哪几个关键词命中。"""
     t = (title or "").strip()
     if not t:
         return []
@@ -219,14 +230,44 @@ def match_actions(conn, title):
         try:
             if a["match_type"] == "regex":
                 if re.search(kw, t, re.IGNORECASE):
-                    hits.append(a)
+                    hits.append({"action": a, "reason": "正则匹配: %s" % kw})
             else:
                 words = [w.strip() for w in kw.split(",") if w.strip()]
                 if words and all(w.lower() in t.lower() for w in words):
-                    hits.append(a)
-        except re.error:
-            continue
+                    hits.append({"action": a, "reason": "关键词全部命中: %s" % ",".join(words)})
+        except re.error as e:
+            hits.append({"action": a, "reason": "正则语法错误: %s" % e})
     return hits
+
+
+def fetch_aiops_titles(conn, days=7, max_items=1000):
+    """从 AIOps 拉取近 N 天告警标题（去重前）。用于匹配回放校验。"""
+    token = (kv_get(conn, "aiops_token", "") or "").strip()
+    api = (kv_get(conn, "aiops_url", "") or "").strip() or AIOPS_API
+    if not token:
+        raise RuntimeError("未配置 AIOps Token，请在「全局设置」中填写")
+    import urllib.parse
+    import urllib.request
+    start = (datetime.now() - timedelta(days=int(days))).strftime("%Y-%m-%d 00:00:00")
+    end = (datetime.now() + timedelta(days=1)).strftime("%Y-%m-%d 00:00:00")
+    sul = json.dumps([{"attr": "create_time", "search": [start, end], "operator": "="}],
+                     ensure_ascii=False)
+    out, offset, total = [], 0, None
+    while offset < max_items:
+        params = {"offset": offset, "limit": min(200, max_items - offset), "search_unit_list": sul}
+        req = urllib.request.Request(api + "?" + urllib.parse.urlencode(params),
+                                     headers={"token": token})
+        with urllib.request.urlopen(req, timeout=30) as r:
+            d = json.loads(r.read().decode("utf-8"))
+        if d.get("code") != 0:
+            raise RuntimeError("AIOps 接口返回错误: %s" % str(d)[:200])
+        items = (d.get("data") or {}).get("list") or []
+        total = (d.get("data") or {}).get("count")
+        out.extend(x.get("alarm_title", "") for x in items)
+        if not items or (total is not None and len(out) >= total):
+            break
+        offset += 200
+    return out, total or len(out)
 
 
 # ------------------------------------------------------- 设备会话驱动 ----
@@ -661,9 +702,11 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/session":
                 return self._send_json({"ok": True})
             if path == "/api/config":
-                keys = ["web_password", "api_token", "global_cooldown", "continue_on_error"]
+                keys = ["web_password", "api_token", "global_cooldown", "continue_on_error",
+                        "aiops_url", "aiops_token"]
                 cfg = {k: kv_get(conn, k) for k in keys}
                 cfg["web_password"] = mask_pw(cfg["web_password"])
+                cfg["aiops_token"] = mask_pw(cfg["aiops_token"])
                 return self._send_json(cfg)
             if path == "/api/stats":
                 total = conn.execute("SELECT COUNT(*) c FROM exec_logs").fetchone()["c"]
@@ -799,12 +842,56 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"executed": True, "task_id": log_id})
             m4 = re.match(r"^/api/config$", path)
             if m4:
-                for k in ("global_cooldown", "continue_on_error", "api_token"):
+                for k in ("global_cooldown", "continue_on_error", "api_token", "aiops_url", "aiops_token"):
                     if k in body and body[k] is not None and body[k] != "":
                         kv_set(conn, k, str(body[k]))
                 if body.get("web_password"):
                     kv_set(conn, "web_password", str(body["web_password"]))
                 return self._send_json({"ok": True})
+            # ---- 匹配预检 / 回放校验 ----
+            if path == "/api/match/test":
+                title = (body.get("title") or "").strip()
+                hits = match_detail(conn, title)
+                out = []
+                for h in hits:
+                    a = h["action"]
+                    site = conn.execute("SELECT name FROM sites WHERE id=?", (a["site_id"],)).fetchone()
+                    dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (a["device_id"],)).fetchone()
+                    out.append({"action_id": a["id"], "action_name": a["name"],
+                                "site": site["name"] if site else "", "reason": h["reason"],
+                                "device": dict(dev) if dev else None,
+                                "command_lines": len(parse_block(a["command_block"]))})
+                return self._send_json({"title": title, "matched": bool(out),
+                                        "would_execute": out[0]["action_name"] if out else None,
+                                        "hits": out})
+            if path == "/api/match/replay":
+                days = int(body.get("days") or 7)
+                days = max(1, min(days, 30))
+                try:
+                    titles, total = fetch_aiops_titles(conn, days, max_items=int(body.get("max_items") or 1000))
+                except Exception as e:
+                    return self._send_json({"error": str(e)}, 400)
+                per_action = {}
+                unmatched = {}
+                matched_cnt = 0
+                for t in titles:
+                    hits = match_detail(conn, t)
+                    if not hits:
+                        k = (t or "").strip() or "(空标题)"
+                        unmatched[k] = unmatched.get(k, 0) + 1
+                    else:
+                        matched_cnt += 1
+                        for h in hits:
+                            nm = h["action"]["name"]
+                            per_action[nm] = per_action.get(nm, 0) + 1
+                unl = sorted(unmatched.items(), key=lambda x: -x[1])
+                return self._send_json({
+                    "days": days, "fetched": len(titles), "aiops_total": total,
+                    "matched": matched_cnt, "unmatched": len(titles) - matched_cnt,
+                    "per_action": sorted(per_action.items(), key=lambda x: -x[1]),
+                    "unmatched_titles": [{"title": k, "count": v} for k, v in unl[:80]],
+                    "unmatched_kinds": len(unl),
+                })
             return self._send_json({"error": "not found"}, 404)
         finally:
             conn.close()
@@ -1036,6 +1123,20 @@ pre.out .err{color:#ff9c9c}
 
 <div id="p-actions" style="display:none">
   <div class="card">
+    <h3>匹配预检 <span class="muted">—— 确认"告警标题 ↔ 站点/线路"对应关系是否正确</span></h3>
+    <div class="kv"><label>单条标题测试</label>
+      <input id="mt_title" placeholder="粘贴一条真实告警标题，如：【ICMP中断】41.243.21.170-华刚卢本-Airtel" onkeydown="if(event.key=='Enter')matchTest()">
+      <button class="btn pri" onclick="matchTest()" style="white-space:nowrap">检测</button></div>
+    <div id="mt_out" class="muted" style="margin-left:140px"></div>
+    <div style="border-top:1px dashed var(--line);margin:12px 0;padding-top:12px">
+      <div class="kv"><label>真实告警回放</label>
+        <select id="rp_days" style="width:120px"><option value="1">近 1 天</option><option value="7" selected>近 7 天</option><option value="14">近 14 天</option><option value="30">近 30 天</option></select>
+        <button class="btn ok" onclick="replayRun()">拉取 AIOps 标题并回放</button>
+        <span class="muted">校验现有动作规则能覆盖哪些真实告警；未命中清单用于补关键词</span></div>
+    </div>
+    <div id="rp_out"></div>
+  </div>
+  <div class="card">
     <h3>切换动作 <button class="btn pri sm" style="float:right" onclick="editAction(0)">+ 新建动作</button></h3>
     <div class="muted" style="margin-bottom:8px">告警标题 → 动作匹配：包含模式填逗号分隔关键词（全部包含才命中，如 <code>站点A,4G</code>）；正则模式填单个正则。命令块中 <code>#</code> 开头行为注释，执行时自动跳过。</div>
     <table><thead><tr><th>ID</th><th>动作名</th><th>站点</th><th>设备</th><th>匹配方式</th><th>关键词/正则</th><th>冷却(s)</th><th>状态</th><th>操作</th></tr></thead>
@@ -1065,6 +1166,8 @@ pre.out .err{color:#ff9c9c}
     <div class="kv"><label>Web 登录密码</label><input type="password" id="s_pwd" placeholder="留空不修改"></div>
     <div class="kv"><label>API Token</label><input id="s_token"><span class="muted">AIOps 回调时带 X-API-Token 请求头</span></div>
     <div class="kv"><label>全局冷却(秒)</label><input id="s_cd" type="number"></div>
+    <div class="kv"><label>AIOps 告警接口</label><input id="s_aiops_url"></div>
+    <div class="kv"><label>AIOps Token</label><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放）"></div>
     <div class="muted" style="margin:10px 0">告警回调接口：POST /api/alert，Body: {"title":"告警标题"}，响应含 matched / task_id / skip_reason。</div>
     <button class="btn pri" onclick="saveCfg()">保存设置</button>
   </div>
@@ -1103,6 +1206,7 @@ pre.out .err{color:#ff9c9c}
   <label>匹配关键词 / 正则（包含模式逗号分隔多个，全部包含才命中）*</label>
   <input id="a_kw" placeholder="如：站点A,4G  或正则  站点A.*4G">
   <label>切换命令块（每行一条命令，# 开头为注释）</label>
+  <div class="muted" style="margin:-2px 0 6px">建议一个方向一个动作：命令块内先 <code>undo</code> 掉其它所有方向的策略，再添加本方向，形成"完整状态"——这样从任意当前状态切过来结果都确定，无需系统排序。</div>
   <textarea id="a_cmd" rows="10"></textarea>
   <label>回切命令块（可选，手动触发用）</label>
   <textarea id="a_rb" rows="6"></textarea>
@@ -1314,10 +1418,38 @@ function delSite(id){if(confirm("确认删除站点 #"+id+"？"))api("DELETE","/
 
 // ---- 设置 ----
 function loadCfg(){api("GET","/api/config").then(c=>{
-  $("s_pwd").value="";$("s_token").value=c.api_token||"";$("s_cd").value=c.global_cooldown||0})}
-function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:+$("s_cd").value||0};
+  $("s_pwd").value="";$("s_token").value=c.api_token||"";$("s_cd").value=c.global_cooldown||0;
+  $("s_aiops_url").value=c.aiops_url||"";$("s_aiops_tok").value=""})}
+function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:+$("s_cd").value||0,
+  aiops_url:$("s_aiops_url").value.trim()};
   if($("s_pwd").value)b.web_password=$("s_pwd").value;
+  if($("s_aiops_tok").value)b.aiops_token=$("s_aiops_tok").value.trim();
   api("POST","/api/config",b).then(()=>alert("已保存"))}
+
+// ---- 匹配预检 / 回放 ----
+function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
+  api("POST","/api/match/test",{title:t}).then(r=>{
+    const o=$("mt_out");
+    if(!r.matched){o.innerHTML=`<span style="color:var(--bad)">✗ 未命中任何动作</span>，需补充关键词或检查标题写法`;return}
+    o.innerHTML=r.hits.map(h=>`<div>✓ 命中 <b>${esc(h.action_name)}</b>（站点 ${esc(h.site||"-")} / 设备 ${esc(h.device?h.device.name:"-")}）
+      <span class="muted">${esc(h.reason)}；将执行 ${h.command_lines} 条命令</span></div>`).join("")})}
+function replayRun(){const d=+$("rp_days").value;
+  $("rp_out").innerHTML='<div class="muted">正在拉取 AIOps 告警并回放，请稍候…</div>';
+  api("POST","/api/match/replay",{days:d}).then(r=>{
+    if(r.error){$("rp_out").innerHTML=`<div style="color:var(--bad)">${esc(r.error)}</div>`;return}
+    let h=`<div class="stat" style="margin:12px 0">
+      <div class="it"><b>${r.fetched}</b><span>回放标题数(去重前)</span></div>
+      <div class="it"><b style="color:var(--ok)">${r.matched}</b><span>命中动作</span></div>
+      <div class="it"><b style="color:var(--warn)">${r.unmatched}</b><span>未命中</span></div>
+      <div class="it"><b>${r.unmatched_kinds}</b><span>未命中标题种类</span></div></div>`;
+    if(r.per_action.length)
+      h+=`<table><thead><tr><th>动作</th><th>命中条数</th></tr></thead><tbody>`+
+         r.per_action.map(x=>`<tr><td>${esc(x[0])}</td><td>${x[1]}</td></tr>`).join("")+`</tbody></table>`;
+    if(r.unmatched_titles.length)
+      h+=`<h3 style="margin-top:16px">未命中标题（按次数排序，判断是否属于"不需要切换"的告警）</h3>
+          <table><thead><tr><th>次数</th><th>告警标题</th></tr></thead><tbody>`+
+          r.unmatched_titles.map(x=>`<tr><td>${x.count}</td><td>${esc(x.title)}</td></tr>`).join("")+`</tbody></table>`;
+    $("rp_out").innerHTML=h})}
 function testAlert(){const t=$("t_title").value.trim();if(!t)return alert("请输入标题");
   api("POST","/api/alert",{title:t}).then(r=>{const o=$("t_out");o.style.display="block";
     o.textContent=JSON.stringify(r,null,2);loadLogs()})}
