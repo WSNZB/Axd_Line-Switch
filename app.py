@@ -1501,162 +1501,340 @@ def row_remark(conn, table, rid):
 
 
 # --------------------------------------------------------------- 页面 ----
-PAGE_HTML = r"""<!DOCTYPE html>
+PAGE_HTML = r"""
+<!DOCTYPE html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Axd_Line_Switch · 线路自动切换</title>
 <style>
-:root{--bg:#f5f6f8;--card:#fff;--line:#e3e6ea;--txt:#1f2d3d;--sub:#7a8699;--pri:#2b6de8;--ok:#18a058;--bad:#d43a3a;--warn:#d98b00}
+:root{
+  --bg:#eef1f6; --card:#ffffff; --line:#e5e9f0; --line2:#eef1f5;
+  --txt:#17233b; --sub:#8492a9; --sub2:#a5b1c6;
+  --pri:#3b6cf0; --pri-d:#2f57c4; --pri-bg:#eef3ff;
+  --ok:#12a150; --ok-bg:#e7f7ee; --bad:#e0484d; --bad-bg:#fdeced;
+  --warn:#d97b06; --warn-bg:#fdf3e3; --teal:#0e8f8e; --teal-bg:#e4f5f5;
+  --purple:#6c5ce7; --purple-bg:#f0edfd;
+  --sb-bg:#101a2e; --sb-txt:#93a3bc; --sb-on:#ffffff;
+  --shadow:0 1px 2px rgba(23,35,59,.05),0 4px 16px rgba(23,35,59,.06);
+  --r:12px;
+}
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--txt);font-size:14px}
-.topbar{background:#fff;border-bottom:1px solid var(--line);padding:0 20px;display:flex;align-items:center;height:52px;position:sticky;top:0;z-index:10}
-.topbar h1{font-size:17px;margin-right:24px;font-weight:600}
-.tabs{display:flex;gap:4px;flex:1}
-.tabs button{border:none;background:none;padding:8px 14px;cursor:pointer;font-size:14px;color:var(--sub);border-radius:6px}
-.tabs button.on{background:#eaf1fe;color:var(--pri);font-weight:600}
-.wrap{max-width:1200px;margin:18px auto;padding:0 16px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:16px}
-.card h3{font-size:15px;margin-bottom:12px}
-.btn{border:1px solid var(--line);background:#fff;color:var(--txt);padding:6px 14px;border-radius:6px;cursor:pointer;font-size:13px}
-.btn.pri{background:var(--pri);color:#fff;border-color:var(--pri)}
-.btn.ok{background:var(--ok);color:#fff;border-color:var(--ok)}
-.btn.warn{background:var(--warn);color:#fff;border-color:var(--warn)}
-.btn.bad{background:var(--bad);color:#fff;border-color:var(--bad)}
-.btn.sm{padding:3px 10px;font-size:12px}
+html,body{height:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;
+  background:var(--bg);color:var(--txt);font-size:14px;-webkit-font-smoothing:antialiased}
+::-webkit-scrollbar{width:9px;height:9px}
+::-webkit-scrollbar-thumb{background:#c8d0dd;border-radius:8px;border:2px solid transparent;background-clip:content-box}
+::-webkit-scrollbar-track{background:transparent}
+
+/* ---------- 布局 ---------- */
+.app{display:flex;min-height:100vh}
+.sidebar{width:216px;flex:0 0 216px;background:linear-gradient(180deg,#131f38 0%,#0d1626 100%);
+  display:flex;flex-direction:column;position:sticky;top:0;height:100vh;z-index:20}
+.brand{display:flex;align-items:center;gap:10px;padding:20px 18px 18px;color:#fff}
+.brand .logo{width:34px;height:34px;flex:0 0 34px;border-radius:10px;
+  background:linear-gradient(135deg,#3b6cf0,#7c5cf0);display:flex;align-items:center;justify-content:center;
+  box-shadow:0 4px 12px rgba(59,108,240,.4)}
+.brand .bt{font-size:14.5px;font-weight:700;letter-spacing:.2px;line-height:1.25}
+.brand .bs{font-size:11px;color:#6d7f9e}
+.nav{padding:6px 12px;flex:1;overflow-y:auto}
+.nav .sec{font-size:10.5px;color:#54658a;letter-spacing:1.5px;padding:14px 8px 6px;font-weight:600}
+.nav button{display:flex;align-items:center;gap:10px;width:100%;border:none;background:none;color:var(--sb-txt);
+  padding:9px 10px;border-radius:9px;cursor:pointer;font-size:13.5px;margin-bottom:2px;text-align:left;
+  transition:background .15s,color .15s}
+.nav button svg{width:16px;height:16px;flex:0 0 16px;opacity:.85}
+.nav button:hover{background:rgba(255,255,255,.06);color:#cbd6e8}
+.nav button.on{background:linear-gradient(90deg,rgba(59,108,240,.28),rgba(59,108,240,.12));color:#fff;font-weight:600;
+  box-shadow:inset 2px 0 0 #5b85f5}
+.side-foot{padding:14px 16px;border-top:1px solid rgba(255,255,255,.07);display:flex;flex-direction:column;gap:10px}
+.side-foot .ver{font-size:11px;color:#54658a;line-height:1.6;word-break:break-all}
+.side-foot .out{background:rgba(255,255,255,.07);border:none;color:#aab8cf;padding:7px 12px;border-radius:8px;
+  cursor:pointer;font-size:12.5px;display:flex;align-items:center;gap:8px;justify-content:center;transition:background .15s}
+.side-foot .out:hover{background:rgba(255,255,255,.14);color:#fff}
+
+.main{flex:1;min-width:0;display:flex;flex-direction:column}
+.topbar{height:60px;flex:0 0 60px;background:rgba(255,255,255,.82);backdrop-filter:blur(10px);
+  border-bottom:1px solid var(--line);display:flex;align-items:center;padding:0 26px;gap:14px;position:sticky;top:0;z-index:10}
+.topbar h2{font-size:16.5px;font-weight:700}
+.topbar .crumb{color:var(--sub2);font-size:12.5px}
+.topbar .sp{flex:1}
+.pill-live{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--ok);
+  background:var(--ok-bg);padding:4px 12px;border-radius:999px;font-weight:600}
+.pill-live i{width:7px;height:7px;border-radius:50%;background:var(--ok);animation:pulse 1.8s infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
+.wrap{max-width:1240px;width:100%;margin:22px auto 40px;padding:0 26px}
+
+/* ---------- 卡片 ---------- */
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+  padding:20px 22px;margin-bottom:18px}
+.card-hd{display:flex;align-items:center;gap:10px;margin-bottom:16px}
+.card-hd h3{font-size:15px;font-weight:700}
+.card-hd .sub{font-size:12px;color:var(--sub)}
+.card-hd .sp{flex:1}
+.hint{font-size:12.5px;color:var(--sub);background:var(--line2);border-radius:8px;padding:8px 12px;margin-bottom:12px;line-height:1.7}
+.hint code{background:#e7ebf2;border-radius:4px;padding:1px 5px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:11.5px;color:#3d4f6e}
+
+/* ---------- 统计卡 ---------- */
+.stat{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
+.stat .it{background:var(--card);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow);
+  padding:16px 18px;display:flex;align-items:center;gap:14px;position:relative;overflow:hidden}
+.stat .it::after{content:"";position:absolute;inset:0 auto 0 0;width:3px;background:var(--ic,#3b6cf0)}
+.stat .ic{width:40px;height:40px;flex:0 0 40px;border-radius:11px;display:flex;align-items:center;justify-content:center;
+  background:var(--ic-bg,#eef3ff);color:var(--ic,#3b6cf0)}
+.stat .ic svg{width:19px;height:19px}
+.stat b{font-size:23px;font-weight:800;letter-spacing:-.5px;display:block;line-height:1.15;font-variant-numeric:tabular-nums}
+.stat span{color:var(--sub);font-size:12px}
+
+/* ---------- 按钮 ---------- */
+.btn{border:1px solid var(--line);background:#fff;color:#3d4a63;padding:7px 15px;border-radius:8px;cursor:pointer;
+  font-size:13px;font-weight:500;transition:all .15s;white-space:nowrap;box-shadow:0 1px 1px rgba(23,35,59,.03)}
+.btn:hover{border-color:#c9d4e8;background:#f8fafd}
+.btn:active{transform:translateY(1px)}
+.btn.pri{background:linear-gradient(180deg,#4a77f2,#3b6cf0);color:#fff;border-color:transparent;box-shadow:0 2px 8px rgba(59,108,240,.32)}
+.btn.pri:hover{background:linear-gradient(180deg,#3f69dd,#3560d8)}
+.btn.ok{background:linear-gradient(180deg,#1cb262,#12a150);color:#fff;border-color:transparent;box-shadow:0 2px 8px rgba(18,161,80,.28)}
+.btn.ok:hover{filter:brightness(.96)}
+.btn.warn{background:linear-gradient(180deg,#e8890f,#d97b06);color:#fff;border-color:transparent;box-shadow:0 2px 8px rgba(217,123,6,.28)}
+.btn.warn:hover{filter:brightness(.96)}
+.btn.bad{background:#fff;color:var(--bad);border-color:#f2c7c9}
+.btn.bad:hover{background:var(--bad-bg)}
+.btn.sm{padding:4px 11px;font-size:12px;border-radius:7px}
+.btn.ghost{background:transparent;border-color:transparent;box-shadow:none;color:var(--sub)}
+.btn.ghost:hover{background:var(--line2);color:var(--txt)}
+
+/* ---------- 表格 ---------- */
+.tbl-wrap{overflow-x:auto;border:1px solid var(--line2);border-radius:10px}
 table{width:100%;border-collapse:collapse}
-th,td{text-align:left;padding:8px 10px;border-bottom:1px solid var(--line);font-size:13px;vertical-align:top}
-th{color:var(--sub);font-weight:500;white-space:nowrap}
-.tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
-.tag.success{background:#e6f7ef;color:var(--ok)} .tag.failed{background:#fdeaea;color:var(--bad)}
-.tag.running{background:#eaf1fe;color:var(--pri)} .tag.cooldown{background:#fff7e6;color:var(--warn)}
-.tag.verify_failed{background:#fff0e0;color:#c25a00}
-.tag.skipped{background:#f1efec;color:#6b6b6b}
-.muted{color:var(--sub);font-size:12px}
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-label{display:block;font-size:12px;color:var(--sub);margin:8px 0 4px}
-input,select,textarea{width:100%;border:1px solid var(--line);border-radius:6px;padding:7px 9px;font-size:13px;font-family:inherit}
-textarea{font-family:Menlo,Consolas,monospace;font-size:12px;line-height:1.5}
-.modal{position:fixed;inset:0;background:rgba(15,23,42,.45);display:none;align-items:flex-start;justify-content:center;z-index:100;overflow:auto;padding:40px 16px}
-.modal.show{display:flex}
-.modal .box{background:#fff;border-radius:12px;padding:20px;width:720px;max-width:100%}
-.modal h3{margin-bottom:8px}
-.mfoot{margin-top:14px;display:flex;gap:8px;justify-content:flex-end}
-.login{position:fixed;inset:0;background:var(--bg);display:flex;align-items:center;justify-content:center;z-index:200}
-.login .box{background:#fff;border:1px solid var(--line);border-radius:12px;padding:32px;width:320px}
-pre.out{background:#1f2d3d;color:#d5e2f5;padding:10px;border-radius:8px;font-size:12px;overflow:auto;max-height:260px;white-space:pre-wrap}
+th,td{text-align:left;padding:10px 14px;font-size:13px;vertical-align:top}
+thead th{color:var(--sub);font-weight:600;font-size:11.5px;letter-spacing:.6px;text-transform:uppercase;
+  background:#f7f9fc;border-bottom:1px solid var(--line);white-space:nowrap}
+tbody tr{border-bottom:1px solid var(--line2);transition:background .12s}
+tbody tr:last-child{border-bottom:none}
+tbody tr:hover{background:#f8fafd}
+td{color:var(--txt)}
+td .mono,td b.mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.empty{padding:34px 10px;text-align:center;color:var(--sub2);font-size:13px}
+.empty svg{width:34px;height:34px;display:block;margin:0 auto 8px;opacity:.5}
+
+/* ---------- 标签 ---------- */
+.tag{display:inline-flex;align-items:center;gap:5px;padding:2px 10px;border-radius:999px;font-size:12px;font-weight:600;line-height:1.7}
+.tag::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.7}
+.tag.success{background:var(--ok-bg);color:var(--ok)}
+.tag.failed{background:var(--bad-bg);color:var(--bad)}
+.tag.running{background:var(--pri-bg);color:var(--pri)}
+.tag.cooldown{background:var(--warn-bg);color:var(--warn)}
+.tag.verify_failed{background:#ffefe0;color:#c25a00}
+.tag.skipped,.tag.cooldown_skip{background:#f0f2f6;color:#68758c}
+.tag.plain::before{display:none}
+
+/* ---------- 表单 ---------- */
+.grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px}
+label{display:block;font-size:12px;color:#5a6b87;margin:12px 0 5px;font-weight:600}
+input,select,textarea{width:100%;border:1px solid #dbe2ec;border-radius:8px;padding:8px 11px;font-size:13px;
+  font-family:inherit;color:var(--txt);background:#fff;transition:border .15s,box-shadow .15s;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(59,108,240,.14)}
+input::placeholder,textarea::placeholder{color:#b3bed1}
+textarea{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px;line-height:1.6;resize:vertical}
+select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M1 1l4 4 4-4' stroke='%238492a9' stroke-width='1.5' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center;padding-right:30px}
+.kv{display:grid;grid-template-columns:190px 1fr;gap:14px;align-items:center;margin:12px 0}
+.kv label{margin:0;text-align:right;color:#5a6b87}
+.kv .ctl{display:flex;gap:10px;align-items:center}
+.kv .ctl input,.kv .ctl select{flex:1}
+.kv .tip{font-size:11.5px;color:var(--sub2);margin-top:4px}
+.sw{display:inline-flex;align-items:center;gap:8px;cursor:pointer;user-select:none;font-size:13px;margin-top:26px}
+.sw input{width:34px;height:19px;accent-color:var(--pri);cursor:pointer}
+
+/* ---------- 弹窗 ---------- */
+.modal{position:fixed;inset:0;background:rgba(13,22,38,.5);backdrop-filter:blur(3px);display:none;
+  align-items:flex-start;justify-content:center;z-index:100;overflow:auto;padding:48px 16px}
+.modal.show{display:flex;animation:fade .18s ease}
+@keyframes fade{from{opacity:0}to{opacity:1}}
+.modal .box{background:#fff;border-radius:16px;width:760px;max-width:100%;box-shadow:0 24px 64px rgba(13,22,38,.3);
+  animation:rise .22s cubic-bezier(.2,.9,.3,1.2)}
+@keyframes rise{from{transform:translateY(16px);opacity:0}to{transform:none;opacity:1}}
+.mhd{display:flex;align-items:center;padding:18px 24px 0;gap:10px}
+.mhd h3{font-size:16px;font-weight:700;flex:1}
+.mx{border:none;background:#f0f2f6;color:#68758c;width:28px;height:28px;border-radius:8px;cursor:pointer;
+  font-size:15px;line-height:1;display:flex;align-items:center;justify-content:center}
+.mx:hover{background:var(--bad-bg);color:var(--bad)}
+.mbd{padding:6px 24px 4px}
+.mfoot{padding:14px 24px 20px;display:flex;gap:8px;justify-content:flex-end;align-items:center}
+.mfoot .sp{flex:1}
+
+/* ---------- 终端输出 ---------- */
+pre.out{background:#101a2e;color:#c6d4ec;padding:14px 16px;border-radius:10px;font-size:12px;
+  font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.65;overflow:auto;max-height:280px;white-space:pre-wrap;
+  border:1px solid #1d2c4a}
 pre.out .err{color:#ff9c9c}
-.stat{display:flex;gap:12px;margin-bottom:14px}
-.stat .it{flex:1;background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 16px}
-.stat .it b{font-size:22px;display:block}
-.stat .it span{color:var(--sub);font-size:12px}
-.kv{display:flex;align-items:center;gap:10px;margin:10px 0}
-.kv label{margin:0;width:130px}
-.sw{display:flex;align-items:center;gap:6px;margin-top:6px}
-.steps td{padding:4px 8px}
+details{margin:8px 0}
+details summary{cursor:pointer;color:var(--sub);font-size:12.5px;padding:4px 0;outline:none}
+details summary:hover{color:var(--pri)}
+.step{border:1px solid var(--line2);border-radius:10px;padding:12px 14px;margin-top:10px;background:#fbfcfe}
+.step .sh{display:flex;align-items:center;gap:8px;font-size:13px}
+.step .sh code{background:#eef1f6;padding:2px 8px;border-radius:6px;font-size:12px}
+.log-meta{display:flex;flex-wrap:wrap;gap:8px 22px;background:#f7f9fc;border:1px solid var(--line2);
+  border-radius:10px;padding:12px 16px;font-size:12.5px;color:#5a6b87;margin-bottom:14px}
+.log-meta b{color:var(--txt)}
+
+/* ---------- 登录 ---------- */
+.login{position:fixed;inset:0;background:
+  radial-gradient(900px 500px at 15% 10%,rgba(59,108,240,.35),transparent 60%),
+  radial-gradient(800px 500px at 85% 90%,rgba(124,92,240,.3),transparent 60%),#101a2e;
+  display:none;align-items:center;justify-content:center;z-index:200}
+.login.show{display:flex}
+.login .box{background:rgba(255,255,255,.97);border-radius:18px;padding:36px 34px;width:360px;
+  box-shadow:0 32px 80px rgba(0,0,0,.45)}
+.login .lg-logo{width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,#3b6cf0,#7c5cf0);
+  display:flex;align-items:center;justify-content:center;margin-bottom:16px;box-shadow:0 8px 24px rgba(59,108,240,.45)}
+.login h3{font-size:19px;margin-bottom:4px}
+.login .ls{font-size:12.5px;color:var(--sub);margin-bottom:22px}
+.login input{padding:11px 13px;font-size:14px}
+.login .btn{width:100%;padding:11px;font-size:14px;margin-top:12px}
+#lg_err{color:var(--bad);margin-top:10px;font-size:12.5px}
+
+@media (max-width:900px){
+  .sidebar{width:64px;flex-basis:64px}
+  .brand .bt,.brand .bs,.nav button span,.nav .sec,.side-foot .ver{display:none}
+  .brand{justify-content:center;padding:18px 0}
+  .nav button{justify-content:center;padding:11px}
+  .stat{grid-template-columns:1fr 1fr}
+  .grid2,.grid3,.kv{grid-template-columns:1fr}
+  .kv label{text-align:left}
+  .wrap{padding:0 14px}
+}
 </style>
 </head>
 <body>
-<div class="topbar">
-  <h1>Axd_Line_Switch <span class="muted" id="ver" style="font-size:11px;font-weight:400"></span></h1>
-  <div class="tabs" id="tabs">
-    <button data-p="dash" class="on">执行记录</button>
-    <button data-p="actions">切换动作</button>
-    <button data-p="devices">设备管理</button>
-    <button data-p="sites">站点管理</button>
-    <button data-p="settings">全局设置</button>
+
+<div class="app">
+<aside class="sidebar">
+  <div class="brand">
+    <div class="logo"><svg viewBox="0 0 24 24" width="19" height="19" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg></div>
+    <div><div class="bt">Axd_Line_Switch</div><div class="bs">告警驱动 · 线路自动切换</div></div>
   </div>
-  <button class="btn sm" onclick="logout()">退出</button>
-</div>
+  <nav class="nav" id="tabs">
+    <div class="sec">监 控</div>
+    <button data-p="dash" class="on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg><span>执行记录</span></button>
+    <div class="sec">配 置</div>
+    <button data-p="actions"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg><span>切换动作</span></button>
+    <button data-p="devices"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/></svg><span>设备管理</span></button>
+    <button data-p="sites"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg><span>站点管理</span></button>
+    <div class="sec">系 统</div>
+    <button data-p="settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>全局设置</span></button>
+  </nav>
+  <div class="side-foot">
+    <div class="ver" id="ver"></div>
+    <button class="out" onclick="logout()"><svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>退出登录</button>
+  </div>
+</aside>
+
+<div class="main">
+<header class="topbar">
+  <h2 id="pageTitle">执行记录</h2>
+  <span class="crumb" id="pageDesc">切换任务执行历史与结果</span>
+  <span class="sp"></span>
+  <span class="pill-live"><i></i>运行中</span>
+  <button class="btn sm" onclick="refreshNow()">刷新</button>
+</header>
+
 <div class="wrap">
 
 <div id="p-dash">
   <div class="stat" id="stat"></div>
   <div class="card">
-    <h3>执行记录 <span class="muted">（点击行查看每条命令回显与会话原文；30 秒自动刷新）</span>
-      <button class="btn sm" onclick="loadLogs()" style="float:right">刷新</button></h3>
-    <table><thead><tr><th>ID</th><th>时间</th><th>触发</th><th>告警标题</th><th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
-    <tbody id="logtb"></tbody></table>
+    <div class="card-hd"><h3>执行记录</h3><span class="sub">点击行查看每条命令回显与会话原文 · 30 秒自动刷新</span></div>
+    <div class="tbl-wrap"><table><thead><tr><th>ID</th><th>时间</th><th>触发</th><th>告警标题</th><th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
+    <tbody id="logtb"></tbody></table></div>
   </div>
 </div>
 
 <div id="p-actions" style="display:none">
   <div class="card">
-    <h3>匹配预检 <span class="muted">—— 确认"告警标题 ↔ 站点/线路"对应关系是否正确</span></h3>
+    <div class="card-hd"><h3>匹配预检</h3><span class="sub">确认「告警标题 ↔ 站点 / 线路」对应关系是否正确</span></div>
     <div class="kv"><label>单条标题测试</label>
-      <input id="mt_title" placeholder="粘贴一条真实告警标题，如：【ICMP中断】41.243.21.170-华刚卢本-Airtel" onkeydown="if(event.key=='Enter')matchTest()">
-      <button class="btn pri" onclick="matchTest()" style="white-space:nowrap">检测</button></div>
-    <div id="mt_out" class="muted" style="margin-left:140px"></div>
-    <div style="border-top:1px dashed var(--line);margin:12px 0;padding-top:12px">
+      <div class="ctl"><input id="mt_title" placeholder="粘贴一条真实告警标题，如：【ICMP中断】41.243.21.170-华刚卢本-Airtel" onkeydown="if(event.key=='Enter')matchTest()">
+      <button class="btn pri" onclick="matchTest()">检测</button></div></div>
+    <div id="mt_out" style="margin-left:204px;margin-bottom:6px"></div>
+    <div style="border-top:1px dashed var(--line);margin:14px 0 0;padding-top:14px">
       <div class="kv"><label>真实告警回放</label>
-        <select id="rp_days" style="width:120px"><option value="1">近 1 天</option><option value="7" selected>近 7 天</option><option value="14">近 14 天</option><option value="30">近 30 天</option></select>
-        <button class="btn ok" onclick="replayRun()">拉取 AIOps 标题并回放</button>
-        <span class="muted">校验现有动作规则能覆盖哪些真实告警；未命中清单用于补关键词</span></div>
+        <div class="ctl"><select id="rp_days" style="flex:0 0 130px"><option value="1">近 1 天</option><option value="7" selected>近 7 天</option><option value="14">近 14 天</option><option value="30">近 30 天</option></select>
+        <button class="btn ok" onclick="replayRun()">拉取 AIOps 标题并回放</button></div></div>
+      <div class="hint" style="margin-left:204px">校验现有动作规则能覆盖哪些真实告警；未命中清单用于补充关键词。</div>
     </div>
     <div id="rp_out"></div>
   </div>
   <div class="card">
-    <h3>切换动作 <button class="btn pri sm" style="float:right" onclick="editAction(0)">+ 新建动作</button></h3>
-    <div class="muted" style="margin-bottom:8px">告警标题 → 动作匹配：包含模式填逗号分隔关键词（全部包含才命中，如 <code>站点A,4G</code>）；正则模式填单个正则。命令块中 <code>#</code> 开头行为注释，执行时自动跳过。</div>
-    <table><thead><tr><th>ID</th><th>动作名</th><th>站点</th><th>设备</th><th>匹配方式</th><th>关键词/正则</th><th>冷却(s)</th><th>状态</th><th>操作</th></tr></thead>
-    <tbody id="acttb"></tbody></table>
+    <div class="card-hd"><h3>切换动作</h3><span class="sp"></span>
+      <button class="btn pri sm" onclick="editAction(0)">＋ 新建动作</button></div>
+    <div class="hint">告警标题 → 动作匹配：包含模式填逗号分隔关键词（<b>全部包含</b>才命中，如 <code>站点A,4G</code>）；正则模式填单个正则。命令块中 <code>#</code> 开头行为注释，执行时自动跳过。</div>
+    <div class="tbl-wrap"><table><thead><tr><th>ID</th><th>动作名</th><th>站点</th><th>设备</th><th>匹配方式</th><th>关键词/正则</th><th>冷却(s)</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody id="acttb"></tbody></table></div>
   </div>
 </div>
 
 <div id="p-devices" style="display:none">
   <div class="card">
-    <h3>设备管理 <button class="btn pri sm" style="float:right" onclick="editDevice(0)">+ 新建设备</button></h3>
-    <table><thead><tr><th>ID</th><th>设备名</th><th>站点</th><th>地址</th><th>协议</th><th>账号</th><th>超时</th><th>状态</th><th>操作</th></tr></thead>
-    <tbody id="devtb"></tbody></table>
+    <div class="card-hd"><h3>设备管理</h3><span class="sp"></span>
+      <button class="btn pri sm" onclick="editDevice(0)">＋ 新建设备</button></div>
+    <div class="tbl-wrap"><table><thead><tr><th>ID</th><th>设备名</th><th>站点</th><th>地址</th><th>协议</th><th>账号</th><th>超时</th><th>状态</th><th>操作</th></tr></thead>
+    <tbody id="devtb"></tbody></table></div>
   </div>
 </div>
 
 <div id="p-sites" style="display:none">
   <div class="card">
-    <h3>站点管理 <span class="muted">（线路关键词用于判定"故障线路"与"多条线路同时告警"）</span>
-      <button class="btn pri sm" style="float:right" onclick="editSite(0)">+ 新建站点</button></h3>
-    <table><thead><tr><th>ID</th><th>站点名称</th><th>线路</th><th>备注</th><th>操作</th></tr></thead>
-    <tbody id="sitetb"></tbody></table>
+    <div class="card-hd"><h3>站点管理</h3><span class="sub">线路关键词用于判定「故障线路」与「多条线路同时告警」</span><span class="sp"></span>
+      <button class="btn pri sm" onclick="editSite(0)">＋ 新建站点</button></div>
+    <div class="tbl-wrap"><table><thead><tr><th>ID</th><th>站点名称</th><th>线路</th><th>备注</th><th>操作</th></tr></thead>
+    <tbody id="sitetb"></tbody></table></div>
   </div>
 </div>
 
 <div id="p-settings" style="display:none">
   <div class="card">
-    <h3>全局设置</h3>
-    <div class="kv"><label>Web 登录密码</label><input type="password" id="s_pwd" placeholder="留空不修改"></div>
-    <div class="kv"><label>API Token</label><input id="s_token"><span class="muted">AIOps 回调时带 X-API-Token 请求头</span></div>
-    <div class="kv"><label>全局冷却(秒)</label><input id="s_cd" type="number"></div>
-    <div class="kv"><label>AIOps 告警接口</label><input id="s_aiops_url"></div>
-    <div class="kv"><label>AIOps Token</label><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放/互斥判定）"></div>
-    <div class="kv"><label>活跃告警判定窗口(分钟)</label><input id="s_window" type="number" placeholder="30"><span class="muted">收到告警时，查近 N 分钟内未恢复的告警判断其它线路是否也异常</span></div>
-    <div class="muted" style="margin:10px 0">告警回调接口：POST /api/alert，Body: {"title":"告警标题"}，响应含 matched / task_id / skip_reason。</div>
+    <div class="card-hd"><h3>全局设置</h3></div>
+    <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
+    <div class="kv"><label>API Token</label><div class="ctl"><input id="s_token"></div></div>
+    <div class="tip" style="margin:-4px 0 8px 204px;color:var(--sub2);font-size:12px">AIOps 回调时带 X-API-Token 请求头</div>
+    <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:200px"></div></div>
+    <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
+    <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放/互斥判定）"></div></div>
+    <div class="kv"><label>活跃告警判定窗口(分钟)</label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:200px"></div></div>
+    <div class="tip" style="margin:-4px 0 8px 204px;color:var(--sub2);font-size:12px">收到告警时，查近 N 分钟内未恢复的告警判断其它线路是否也异常</div>
+    <div class="hint" style="margin-top:14px">告警回调接口：<code>POST /api/alert</code>，Body: <code>{"title":"告警标题"}</code>，响应含 matched / task_id / skip_reason。</div>
     <button class="btn pri" onclick="saveCfg()">保存设置</button>
   </div>
   <div class="card">
-    <h3>告警回调测试</h3>
-    <div class="kv"><label>告警标题</label><input id="t_title" placeholder="如：站点A-4G专线中断"></div>
-    <button class="btn" onclick="testAlert()">发送测试</button>
-    <pre class="out" id="t_out" style="display:none;margin-top:10px"></pre>
+    <div class="card-hd"><h3>告警回调测试</h3></div>
+    <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如：站点A-4G专线中断"></div></div>
+    <div style="margin-left:204px"><button class="btn" onclick="testAlert()">发送测试</button></div>
+    <pre class="out" id="t_out" style="display:none;margin-top:12px"></pre>
   </div>
 </div>
 
 </div>
+</div>
+</div>
 
 <!-- 登录 -->
-<div class="login" id="loginBox" style="display:none">
+<div class="login" id="loginBox">
   <div class="box">
-    <h3 style="margin-bottom:12px">Axd_Line_Switch 登录</h3>
+    <div class="lg-logo"><svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 17l6-6-6-6"/><path d="M12 19h8"/></svg></div>
+    <h3>Axd_Line_Switch</h3>
+    <div class="ls">告警驱动 · 线路自动切换控制台</div>
     <input type="password" id="lg_pwd" placeholder="Web 登录密码" onkeydown="if(event.key=='Enter')doLogin()">
-    <button class="btn pri" style="width:100%;margin-top:12px" onclick="doLogin()">登 录</button>
-    <div class="muted" id="lg_err" style="color:var(--bad);margin-top:8px"></div>
+    <button class="btn pri" onclick="doLogin()">登 录</button>
+    <div id="lg_err"></div>
   </div>
 </div>
 
 <!-- 动作编辑 -->
 <div class="modal" id="mAct"><div class="box">
-  <h3 id="mActTitle">切换动作</h3>
+  <div class="mhd"><h3 id="mActTitle">切换动作</h3><button class="mx" onclick="closeM('mAct')">✕</button></div>
+  <div class="mbd">
   <input type="hidden" id="a_id">
   <div class="grid2">
     <div><label>动作名称 *</label><input id="a_name" placeholder="如：切到4G"></div>
@@ -1669,22 +1847,24 @@ pre.out .err{color:#ff9c9c}
   <label>匹配关键词 / 正则（包含模式逗号分隔多个，全部包含才命中）*</label>
   <input id="a_kw" placeholder="如：站点A,4G  或正则  站点A.*4G">
   <label>切换命令块（每行一条命令，# 开头为注释）</label>
-  <div class="muted" style="margin:-2px 0 6px">建议一个方向一个动作：命令块内先 <code>undo</code> 掉其它所有方向的策略，再添加本方向，形成"完整状态"——这样从任意当前状态切过来结果都确定，无需系统排序。</div>
+  <div class="hint" style="margin:4px 0 8px">建议一个方向一个动作：命令块内先 <code>undo</code> 掉其它所有方向的策略，再添加本方向，形成「完整状态」——这样从任意当前状态切过来结果都确定，无需系统排序。</div>
   <textarea id="a_cmd" rows="10"></textarea>
   <label>回切命令块（可选，手动触发用）</label>
-  <textarea id="a_rb" rows="6"></textarea>
-  <label>验证命令块（可选，切换完成后执行并检查期望内容，如 display ip routing-table）</label>
-  <textarea id="a_verify" rows="3" placeholder="display ip routing-table"></textarea>
+  <textarea id="a_rb" rows="5"></textarea>
+  <label>验证命令块（可选，切换完成后执行并检查期望内容）</label>
+  <textarea id="a_verify" rows="2" placeholder="display ip routing-table"></textarea>
   <div class="grid2">
     <div><label>目标线路（切换到哪条，用于日志/判定展示）</label><input id="a_target" placeholder="如 Vodacom"></div>
-    <div><label>期望关键词（逗号分隔，须全部出现在验证回显中）</label><input id="a_expect" placeholder="如：192.168.130.2（切到 Vodacom 后 0.0.0.0 的下一跳）"></div>
+    <div><label>期望关键词（逗号分隔，须全部出现在验证回显中）</label><input id="a_expect" placeholder="如：192.168.130.2"></div>
   </div>
   <div class="grid2">
     <div><label>冷却时间(秒，0=用全局)</label><input id="a_cd" type="number" value="0"></div>
-    <div class="sw" style="margin-top:22px"><input type="checkbox" id="a_en" checked><span>启用</span></div>
+    <label class="sw"><input type="checkbox" id="a_en" checked><span>启用该动作</span></label>
+  </div>
   </div>
   <div class="mfoot">
     <button class="btn" onclick="closeM('mAct')">取消</button>
+    <span class="sp"></span>
     <button class="btn warn" onclick="execAction(false)">保存前不执行</button>
     <button class="btn pri" onclick="saveAction()">保存</button>
   </div>
@@ -1692,7 +1872,8 @@ pre.out .err{color:#ff9c9c}
 
 <!-- 设备编辑 -->
 <div class="modal" id="mDev"><div class="box">
-  <h3 id="mDevTitle">设备</h3>
+  <div class="mhd"><h3 id="mDevTitle">设备</h3><button class="mx" onclick="closeM('mDev')">✕</button></div>
+  <div class="mbd">
   <input type="hidden" id="d_id">
   <div class="grid2">
     <div><label>设备名称 *</label><input id="d_name"></div>
@@ -1714,55 +1895,63 @@ pre.out .err{color:#ff9c9c}
     <div><label>超时(秒)</label><input id="d_to" type="number" value="10"></div>
   </div>
   <div class="grid2">
-    <div><label>状态查询命令(查当前生效线路)</label><input id="d_scmd" value="display ip routing-table" placeholder="留空则查线路时用 display ip routing-table"></div>
-    <div><label>当前线路正则(空=默认解析 0.0.0.0/0 行下一跳)</label><input id="d_cregex" placeholder="如: 0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)"></div>
+    <div><label>状态查询命令(查当前生效线路)</label><input id="d_scmd" value="display ip routing-table" placeholder="留空则用 display ip routing-table"></div>
+    <div><label>当前线路正则(空=默认解析 0.0.0.0/0 下一跳)</label><input id="d_cregex" placeholder="如: 0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)"></div>
   </div>
   <label>线路映射（每行一条：下一跳IP=线路名，# 注释）</label>
   <textarea id="d_lmap" rows="4" placeholder="192.168.130.2=Vodacom&#10;192.168.130.10=Airtel&#10;192.168.130.22=4G"></textarea>
-  <div class="sw"><input type="checkbox" id="d_en" checked><span>启用</span></div>
+  <label class="sw"><input type="checkbox" id="d_en" checked><span>启用该设备</span></label>
+  <pre class="out" id="d_test" style="display:none;margin-top:12px"></pre>
+  </div>
   <div class="mfoot">
     <button class="btn" onclick="closeM('mDev')">取消</button>
+    <span class="sp"></span>
     <button class="btn ok" onclick="testDevice()">测试连接</button>
     <button class="btn warn" onclick="queryDeviceLine()">查当前线路</button>
     <button class="btn pri" onclick="saveDevice()">保存</button>
   </div>
-  <pre class="out" id="d_test" style="display:none;margin-top:10px"></pre>
 </div></div>
 
 <!-- 站点编辑 -->
-<div class="modal" id="mSite"><div class="box" style="width:420px">
-  <h3 id="mSiteTitle">站点</h3>
+<div class="modal" id="mSite"><div class="box" style="width:440px">
+  <div class="mhd"><h3 id="mSiteTitle">站点</h3><button class="mx" onclick="closeM('mSite')">✕</button></div>
+  <div class="mbd">
   <input type="hidden" id="si_id">
   <label>站点名称 *</label><input id="si_name" placeholder="如：站点A">
   <label>备注</label><input id="si_rm">
+  </div>
   <div class="mfoot">
     <button class="btn" onclick="closeM('mSite')">取消</button>
+    <span class="sp"></span>
     <button class="btn pri" onclick="saveSite()">保存</button>
   </div>
 </div></div>
 
 <!-- 站点线路 -->
-<div class="modal" id="mLine"><div class="box" style="width:760px">
-  <h3 id="mLineTitle">站点线路</h3>
+<div class="modal" id="mLine"><div class="box" style="width:780px">
+  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><button class="mx" onclick="closeM('mLine')">✕</button></div>
+  <div class="mbd">
   <input type="hidden" id="l_site">
-  <div class="muted" style="margin-bottom:8px">线路关键词用于两个判定：①识别告警说的是哪条线路；②查 AIOps 活跃告警判断"是否多条线路同时告警"。关键词为逗号分隔，全部包含即命中。</div>
-  <table><thead><tr><th>线路名</th><th>告警关键词</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead>
-  <tbody id="ltb"></tbody></table>
+  <div class="hint">线路关键词用于两个判定：①识别告警说的是哪条线路；②查 AIOps 活跃告警判断「是否多条线路同时告警」。关键词为逗号分隔，全部包含即命中。</div>
+  <div class="tbl-wrap"><table><thead><tr><th>线路名</th><th>告警关键词</th><th>优先级</th><th>状态</th><th>操作</th></tr></thead>
+  <tbody id="ltb"></tbody></table></div>
   <div class="grid3" style="margin-top:14px">
     <div><label>线路名</label><input id="l_name" placeholder="如 Airtel"></div>
     <div><label>告警关键词(逗号分隔)</label><input id="l_kw" placeholder="如 41.243.21.170,Airtel"></div>
     <div><label>优先级(1最高)</label><input id="l_pri" type="number" value="1"></div>
   </div>
+  </div>
   <div class="mfoot">
     <button class="btn" onclick="closeM('mLine')">关闭</button>
+    <span class="sp"></span>
     <button class="btn pri" onclick="addLine()">添加线路</button>
   </div>
 </div></div>
 
 <!-- 日志详情 -->
 <div class="modal" id="mLog"><div class="box">
-  <h3 id="mLogTitle">执行详情</h3>
-  <div id="mLogBody"></div>
+  <div class="mhd"><h3 id="mLogTitle">执行详情</h3><button class="mx" onclick="closeM('mLog')">✕</button></div>
+  <div class="mbd" id="mLogBody"></div>
   <div class="mfoot"><button class="btn" onclick="closeM('mLog')">关闭</button></div>
 </div></div>
 
@@ -1771,19 +1960,22 @@ let DATA={sites:[],devices:[],actions:[],logs:[]};
 const $=id=>document.getElementById(id);
 const esc=s=>(s==null?"":String(s)).replace(/[&<>"]/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
 function api(m,u,b){return fetch(u,{method:m,headers:{"Content-Type":"application/json"},body:b?JSON.stringify(b):undefined}).then(r=>{
-  if(r.status==401){$("loginBox").style.display="flex";throw new Error("unauthorized")}
+  if(r.status==401){$("loginBox").classList.add("show");throw new Error("unauthorized")}
   return r.json()})}
 function closeM(id){$(id).classList.remove("show")}
 
 // ---- 登录 ----
 function doLogin(){api("POST","/api/login",{password:$("lg_pwd").value}).then(()=>{
-  $("loginBox").style.display="none";$("lg_err").textContent="";boot()}).catch(()=>{$("lg_err").textContent="密码错误"})}
+  $("loginBox").classList.remove("show");$("lg_err").textContent="";boot()}).catch(()=>{$("lg_err").textContent="密码错误"})}
 function logout(){api("POST","/api/logout").then(()=>location.reload())}
 
-// ---- 页签 ----
+// ---- 导航 ----
+const PAGE_INFO={dash:["执行记录","切换任务执行历史与结果"],actions:["切换动作","告警匹配规则与命令块维护"],
+  devices:["设备管理","站点设备连接与线路映射"],sites:["站点管理","站点与线路配置"],settings:["全局设置","接口、令牌与回调参数"]};
 document.querySelectorAll("#tabs button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#tabs button").forEach(x=>x.classList.remove("on"));b.classList.add("on");
   ["dash","actions","devices","sites","settings"].forEach(p=>{$("p-"+p).style.display=(p==b.dataset.p)?"":"none"});
+  $("pageTitle").textContent=PAGE_INFO[b.dataset.p][0];$("pageDesc").textContent=PAGE_INFO[b.dataset.p][1];
   refresh(b.dataset.p)});
 function refresh(p){
   if(p=="dash"){loadStats();loadLogs()}
@@ -1791,48 +1983,58 @@ function refresh(p){
   if(p=="devices")loadDevices();
   if(p=="sites")loadSites();
   if(p=="settings")loadCfg()}
+function refreshNow(){const p=document.querySelector("#tabs button.on");refresh(p?p.dataset.p:"dash")}
 
 // ---- 仪表盘 ----
+const STAT_ICONS=[
+ '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>',
+ '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>',
+ '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/></svg>',
+ '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>'];
+const STAT_COLORS=["#3b6cf0,#eef3ff","#12a150,#e7f7ee","#e0484d,#fdeced","#d97b06,#fdf3e3"];
 function loadStats(){api("GET","/api/stats").then(s=>{
-  $("ver").textContent="v"+(s.version||"?")+" · "+(s.started_at||"");
-  $("stat").innerHTML=["total|总执行","success|成功","failed|失败","running|执行中"].map(x=>{
-    const [k,l]=x.split("|");return `<div class="it"><b>${s[k]}</b><span>${l}</span></div>`}).join("")})}
+  $("ver").textContent="v"+(s.version||"?")+"\n启动于 "+(s.started_at||"");
+  $("stat").innerHTML=["total|总执行","success|成功","failed|失败","running|执行中"].map((x,i)=>{
+    const [k,l]=x.split("|");const [c,bg]=STAT_COLORS[i].split(",");
+    return `<div class="it" style="--ic:${c};--ic-bg:${bg}"><div class="ic">${STAT_ICONS[i]}</div><div><b>${s[k]}</b><span>${l}</span></div></div>`}).join("")})}
+const TRIG={api:["API","var(--pri)","var(--pri-bg)"],manual:["手动","#68758c","#f0f2f6"]};
 function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
   $("logtb").innerHTML=ls.length?ls.map(l=>`<tr onclick="showLog(${l.id})" style="cursor:pointer">
-    <td>${l.id}</td><td>${esc(l.started_at)}</td><td>${l.trigger=="api"?"API":"手动"}</td>
-    <td>${esc(l.alarm_title)||"-"}</td><td>${esc(l.action_name)}</td><td>${esc(l.device_name)}</td>
+    <td class="mono">#${l.id}</td><td class="mono" style="white-space:nowrap;color:var(--sub)">${esc(l.started_at)}</td>
+    <td><span class="tag plain" style="background:${(TRIG[l.trigger]||TRIG.manual)[2]};color:${(TRIG[l.trigger]||TRIG.manual)[1]}">${(TRIG[l.trigger]||TRIG.manual)[0]}</span></td>
+    <td style="max-width:280px">${esc(l.alarm_title)||"-"}</td><td><b>${esc(l.action_name)}</b></td><td>${esc(l.device_name)}</td>
     <td>${l.dry_run?"演练":(l.rollback?"回切":"切换")}</td>
     <td><span class="tag ${l.status}">${l.status=="cooldown_skip"?"冷却跳过":(l.status=="verify_failed"?"验证未过":(l.status=="skipped"?"条件不满足":"")||esc(l.status))}</span></td>
-    <td class="muted">${esc(l.error).slice(0,40)}</td></tr>`).join(""):"<tr><td colspan=9 class=muted>暂无记录</td></tr>"})}
+    <td class="muted" style="color:var(--sub);font-size:12px">${esc(l.error).slice(0,40)}</td></tr>`).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 12h4l3-8 4 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").textContent=`执行详情 #${l.id} · ${l.action_name} · ${l.status=="verify_failed"?"验证未过":(l.status=="skipped"?"条件不满足未切换":l.status)}`;
-  let h=`<div class="muted" style="margin-bottom:8px">告警标题: ${esc(l.alarm_title)||"-"} | 故障线路: <b>${esc(l.source_line)||"-"}</b> | 切换前当前线路: <b>${esc(l.precheck_line)||"未查询"}</b> | 开始: ${esc(l.started_at)} | 结束: ${esc(l.finished_at)||"-"}</div>`;
-  if(l.decision_note)h+=`<div class="muted" style="margin-bottom:8px">判定依据: ${esc(l.decision_note)}</div>`;
-  if(l.error)h+=`<div style="color:var(--bad);margin-bottom:8px">错误: ${esc(l.error)}</div>`;
-  if(l.matched_note)h+=`<details style="margin-bottom:8px"><summary class="muted">登录过程摘要</summary><pre class="out">${esc(l.matched_note)}</pre></details>`;
-  if(l.session_log)h+=`<details style="margin-bottom:8px"><summary class="muted">会话原文（登录 banner + 全部收发，排障用）</summary><pre class="out">${esc(l.session_log)}</pre></details>`;
-  h+=(l.steps||[]).map(s=>`<div style="margin-top:10px"><b>${s.seq}. ${esc(s.command)}</b>
-     <span class="tag ${s.ok?"success":"failed"}">${s.ok?"OK":"FAIL"}</span>
-     <pre class="out ${s.ok?"":"err"}">${esc(s.output)||"(无回显)"}</pre>
-     ${(s.raw_output&&s.raw_output!==s.output)?`<details><summary class="muted">原始回显（含命令回显与提示符）</summary><pre class="out">${esc(s.raw_output)}</pre></details>`:""}</div>`).join("");
+  let h=`<div class="log-meta"><span>告警标题 <b>${esc(l.alarm_title)||"-"}</b></span><span>故障线路 <b>${esc(l.source_line)||"-"}</b></span><span>切换前当前线路 <b>${esc(l.precheck_line)||"未查询"}</b></span><span>开始 <b>${esc(l.started_at)}</b></span><span>结束 <b>${esc(l.finished_at)||"-"}</b></span></div>`;
+  if(l.decision_note)h+=`<div class="hint">判定依据：${esc(l.decision_note)}</div>`;
+  if(l.error)h+=`<div style="color:var(--bad);background:var(--bad-bg);border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px">错误：${esc(l.error)}</div>`;
+  if(l.matched_note)h+=`<details style="margin-bottom:8px"><summary>登录过程摘要</summary><pre class="out">${esc(l.matched_note)}</pre></details>`;
+  if(l.session_log)h+=`<details style="margin-bottom:8px"><summary>会话原文（登录 banner + 全部收发，排障用）</summary><pre class="out">${esc(l.session_log)}</pre></details>`;
+  h+=(l.steps||[]).map(s=>`<div class="step"><div class="sh"><span class="tag ${s.ok?"success":"failed"}">${s.ok?"OK":"FAIL"}</span>
+     <code>${esc(s.command)}</code></div>
+     <pre class="out ${s.ok?"":"err"}" style="margin-top:8px">${esc(s.output)||"(无回显)"}</pre>
+     ${(s.raw_output&&s.raw_output!==s.output)?`<details><summary>原始回显（含命令回显与提示符）</summary><pre class="out">${esc(s.raw_output)}</pre></details>`:""}</div>`).join("");
   $("mLogBody").innerHTML=h;$("mLog").classList.add("show")})}
 
 // ---- 动作 ----
 function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/sites"),api("GET","/api/devices")]).then(([a,s,d])=>{
   DATA.actions=a;DATA.sites=s;DATA.devices=d;
   $("acttb").innerHTML=a.length?a.map(x=>`<tr>
-    <td>${x.id}</td><td><b>${esc(x.name)}</b></td><td>${esc(x.site_name||"-")}</td>
-    <td>${esc(x.device_name||"-")}<div class=muted>${esc(x.protocol||"")}://${esc(x.host||"")}</div></td>
-    <td>${x.match_type=="regex"?"正则":"包含"}</td><td class=muted>${esc(x.match_keywords)}</td>
+    <td class="mono">#${x.id}</td><td><b>${esc(x.name)}</b></td><td>${esc(x.site_name||"-")}</td>
+    <td>${esc(x.device_name||"-")}<div style="color:var(--sub2);font-size:11.5px" class="mono">${esc(x.protocol||"")}://${esc(x.host||"")}</div></td>
+    <td>${x.match_type=="regex"?"正则":"包含"}</td><td class="mono" style="color:var(--sub);font-size:12px">${esc(x.match_keywords)}</td>
     <td>${x.cooldown||"全局"}</td>
-    <td>${x.enabled?'<span class="tag success">启用</span>':'<span class="tag failed">停用</span>'}</td>
+    <td>${x.enabled?'<span class="tag success">启用</span>':'<span class="tag skipped">停用</span>'}</td>
     <td style="white-space:nowrap">
       <button class="btn sm pri" onclick="execAction(${x.id})">执行</button>
       <button class="btn sm warn" onclick="execAction(${x.id},true)">演练</button>
       <button class="btn sm" onclick="execAction(${x.id},false,true)">回切</button>
       <button class="btn sm" onclick="editAction(${x.id})">编辑</button>
       <button class="btn sm bad" onclick="delAction(${x.id})">删除</button></td></tr>`).join(""):
-    "<tr><td colspan=9 class=muted>暂无动作，点击右上角新建</td></tr>"})}
+    '<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 2L3 14h7l-1 8 10-12h-7l1-8z"/></svg>暂无动作，点击右上角「新建动作」</div></td></tr>'})}
 function fillSelect(sel,list,valKey,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
   list.map(x=>`<option value="${x.id}">${esc(labelFirst?x.name:x.name+(x.host?" ("+x.host+")":""))}</option>`).join("")}
 function editAction(id){const a=DATA.actions.find(x=>x.id==id)||{};
@@ -1865,16 +2067,16 @@ function execAction(id,dry,rb){if(dry===false&&id===0)return;
 // ---- 设备 ----
 function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
   $("devtb").innerHTML=d.length?d.map(x=>`<tr>
-    <td>${x.id}</td><td><b>${esc(x.name)}</b></td><td>${esc(x.site_name||"-")}</td>
-    <td>${esc(x.host)}:${x.port}</td><td>${x.protocol}</td><td>${esc(x.username)}</td>
+    <td class="mono">#${x.id}</td><td><b>${esc(x.name)}</b></td><td>${esc(x.site_name||"-")}</td>
+    <td class="mono" style="font-size:12px">${esc(x.host)}:${x.port}</td><td>${x.protocol}</td><td>${esc(x.username)}</td>
     <td>${x.timeout}s</td>
-    <td>${x.enabled?'<span class="tag success">启用</span>':'<span class="tag failed">停用</span>'}</td>
+    <td>${x.enabled?'<span class="tag success">启用</span>':'<span class="tag skipped">停用</span>'}</td>
     <td style="white-space:nowrap">
       <button class="btn sm ok" onclick="testDeviceById(${x.id})">测试</button>
       <button class="btn sm warn" onclick="testDeviceByIdStatus(${x.id})">查线路</button>
       <button class="btn sm" onclick="editDevice(${x.id})">编辑</button>
       <button class="btn sm bad" onclick="delDevice(${x.id})">删除</button></td></tr>`).join(""):
-    "<tr><td colspan=9 class=muted>暂无设备</td></tr>"})}
+    '<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/></svg>暂无设备，点击右上角「新建设备」</div></td></tr>'})}
 function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
   api("GET","/api/sites").then(s=>{DATA.sites=s;fillSelect("d_site",s)});
   $("d_id").value=d.id||"";$("d_name").value=d.name||"";$("d_host").value=d.host||"";
@@ -1922,13 +2124,13 @@ function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines"
   $("sitetb").innerHTML=s.length?s.map(x=>{
     const ls=lines.filter(l=>l.site_id==x.id);
     return `<tr>
-    <td>${x.id}</td><td><b>${esc(x.name)}</b></td>
-    <td>${ls.length?ls.map(l=>`<span class="tag success" style="margin-right:4px">${esc(l.name)}</span>`).join(""):'<span class="muted">未配置</span>'}</td>
-    <td class=muted>${esc(x.remark)}</td>
-    <td>      <button class="btn sm" onclick="editSite(${x.id})">编辑</button>
+    <td class="mono">#${x.id}</td><td><b>${esc(x.name)}</b></td>
+    <td>${ls.length?ls.map(l=>`<span class="tag success" style="margin:0 5px 3px 0">${esc(l.name)}</span>`).join(""):'<span style="color:var(--sub2)">未配置</span>'}</td>
+    <td style="color:var(--sub)">${esc(x.remark)}</td>
+    <td style="white-space:nowrap"><button class="btn sm" onclick="editSite(${x.id})">编辑</button>
     <button class="btn sm warn" onclick="manageLines(${x.id},'${esc(x.name)}')">线路</button>
     <button class="btn sm bad" onclick="delSite(${x.id})">删除</button></td></tr>`}).join(""):
-    "<tr><td colspan=5 class=muted>暂无站点</td></tr>"})}
+    '<tr><td colspan=5><div class="empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M20 10c0 6-8 12-8 12S4 16 4 10a8 8 0 1 1 16 0z"/><circle cx="12" cy="10" r="3"/></svg>暂无站点，点击右上角「新建站点」</div></td></tr>'})}
 function editSite(id){const s=DATA.sites.find(x=>x.id==id)||{};
   $("si_id").value=s.id||"";$("si_name").value=s.name||"";$("si_rm").value=s.remark||"";
   $("mSiteTitle").textContent=s.id?"编辑站点":"新建站点";$("mSite").classList.add("show")}
@@ -1944,11 +2146,11 @@ function manageLines(siteId,siteName){$("l_site").value=siteId;
   loadLines(siteId);$("mLine").classList.add("show")}
 function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
   $("ltb").innerHTML=ls.length?ls.map(l=>`<tr>
-    <td><b>${esc(l.name)}</b></td><td class="muted">${esc(l.alarm_keywords)||'(空)'}</td>
+    <td><b>${esc(l.name)}</b></td><td class="mono" style="color:var(--sub);font-size:12px">${esc(l.alarm_keywords)||'(空)'}</td>
     <td>${l.priority}</td>
-    <td>${l.enabled?'<span class="tag success">启用</span>':'<span class="tag failed">停用</span>'}</td>
+    <td>${l.enabled?'<span class="tag success">启用</span>':'<span class="tag skipped">停用</span>'}</td>
     <td><button class="btn sm bad" onclick="delLine(${l.id})">删除</button></td></tr>`).join(""):
-    "<tr><td colspan=5 class=muted>暂无线路，请添加（如 Airtel / Vodacom / 4G）</td></tr>"})}
+    '<tr><td colspan=5><div class="empty">暂无线路，请添加（如 Airtel / Vodacom / 4G）</div></td></tr>'})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
   alarm_keywords:$("l_kw").value.trim(),priority:+$("l_pri").value||1};
   if(!b.name)return alert("线路名必填");
@@ -1972,36 +2174,42 @@ function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:
 function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
   api("POST","/api/match/test",{title:t}).then(r=>{
     const o=$("mt_out");
-    if(!r.matched){o.innerHTML=`<span style="color:var(--bad)">✗ 未命中任何动作</span>，需补充关键词或检查标题写法`;return}
-    o.innerHTML=r.hits.map(h=>`<div>✓ 命中 <b>${esc(h.action_name)}</b>（站点 ${esc(h.site||"-")} / 设备 ${esc(h.device?h.device.name:"-")}）
-      <span class="muted">${esc(h.reason)}；将执行 ${h.command_lines} 条命令</span></div>`).join("")})}
+    if(!r.matched){o.innerHTML=`<div style="color:var(--bad);background:var(--bad-bg);border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px">✗ 未命中任何动作，需补充关键词或检查标题写法</div>`;return}
+    o.innerHTML=r.hits.map(h=>`<div style="background:var(--ok-bg);color:#0d7a3e;border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px">✓ 命中 <b>${esc(h.action_name)}</b>（站点 ${esc(h.site||"-")} / 设备 ${esc(h.device?h.device.name:"-")}）
+      <span style="opacity:.75">${esc(h.reason)}；将执行 ${h.command_lines} 条命令</span></div>`).join("")})}
 function replayRun(){const d=+$("rp_days").value;
-  $("rp_out").innerHTML='<div class="muted">正在拉取 AIOps 告警并回放，请稍候…</div>';
+  $("rp_out").innerHTML='<div style="color:var(--sub);padding:10px 0">正在拉取 AIOps 告警并回放，请稍候…</div>';
   api("POST","/api/match/replay",{days:d}).then(r=>{
-    if(r.error){$("rp_out").innerHTML=`<div style="color:var(--bad)">${esc(r.error)}</div>`;return}
-    let h=`<div class="stat" style="margin:12px 0">
-      <div class="it"><b>${r.fetched}</b><span>回放标题数(去重前)</span></div>
-      <div class="it"><b style="color:var(--ok)">${r.matched}</b><span>命中动作</span></div>
-      <div class="it"><b style="color:var(--warn)">${r.unmatched}</b><span>未命中</span></div>
-      <div class="it"><b>${r.unmatched_kinds}</b><span>未命中标题种类</span></div></div>`;
+    if(r.error){$("rp_out").innerHTML=`<div style="color:var(--bad);background:var(--bad-bg);border-radius:8px;padding:10px 14px">${esc(r.error)}</div>`;return}
+    let h=`<div class="stat" style="margin:14px 0">
+      <div class="it" style="--ic:#3b6cf0;--ic-bg:#eef3ff"><div class="ic">${STAT_ICONS[0]}</div><div><b>${r.fetched}</b><span>回放标题数(去重前)</span></div></div>
+      <div class="it" style="--ic:#12a150;--ic-bg:#e7f7ee"><div class="ic">${STAT_ICONS[1]}</div><div><b>${r.matched}</b><span>命中动作</span></div></div>
+      <div class="it" style="--ic:#d97b06;--ic-bg:#fdf3e3"><div class="ic">${STAT_ICONS[3]}</div><div><b>${r.unmatched}</b><span>未命中</span></div></div>
+      <div class="it" style="--ic:#6c5ce7;--ic-bg:#f0edfd"><div class="ic">${STAT_ICONS[2]}</div><div><b>${r.unmatched_kinds}</b><span>未命中标题种类</span></div></div></div>`;
     if(r.per_action.length)
-      h+=`<table><thead><tr><th>动作</th><th>命中条数</th></tr></thead><tbody>`+
-         r.per_action.map(x=>`<tr><td>${esc(x[0])}</td><td>${x[1]}</td></tr>`).join("")+`</tbody></table>`;
+      h+=`<div class="tbl-wrap"><table><thead><tr><th>动作</th><th>命中条数</th></tr></thead><tbody>`+
+         r.per_action.map(x=>`<tr><td>${esc(x[0])}</td><td><b>${x[1]}</b></td></tr>`).join("")+`</tbody></table></div>`;
     if(r.unmatched_titles.length)
-      h+=`<h3 style="margin-top:16px">未命中标题（按次数排序，判断是否属于"不需要切换"的告警）</h3>
-          <table><thead><tr><th>次数</th><th>告警标题</th></tr></thead><tbody>`+
-          r.unmatched_titles.map(x=>`<tr><td>${x.count}</td><td>${esc(x.title)}</td></tr>`).join("")+`</tbody></table>`;
+      h+=`<h3 style="margin:18px 0 10px;font-size:14px">未命中标题（按次数排序，判断是否属于「不需要切换」的告警）</h3>
+          <div class="tbl-wrap"><table><thead><tr><th>次数</th><th>告警标题</th></tr></thead><tbody>`+
+          r.unmatched_titles.map(x=>`<tr><td><b>${x.count}</b></td><td>${esc(x.title)}</td></tr>`).join("")+`</tbody></table></div>`;
     $("rp_out").innerHTML=h})}
 function testAlert(){const t=$("t_title").value.trim();if(!t)return alert("请输入标题");
   api("POST","/api/alert",{title:t}).then(r=>{const o=$("t_out");o.style.display="block";
     o.textContent=JSON.stringify(r,null,2);loadLogs()})}
 
 // ---- 启动 ----
-function boot(){refresh("dash");setInterval(()=>{loadStats();loadLogs()},30000)}
-api("GET","/api/session").then(()=>{boot()}).catch(()=>{$("loginBox").style.display="flex"});
+function boot(){refresh("dash");setInterval(()=>{loadStats();loadLogs()},30000);
+  // 支持 #devices / #actions 等深链直达页签
+  const h=(location.hash||"").slice(1);
+  if(PAGE_INFO[h]){const b=document.querySelector('#tabs button[data-p="'+h+'"]');if(b)b.click()}}
+api("GET","/api/session").then(()=>{boot()}).catch(()=>{$("loginBox").classList.add("show")});
+// 点击遮罩关闭弹窗
+document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if(e.target===m)m.classList.remove("show")}));
 </script>
 </body>
 </html>
+
 """
 
 
