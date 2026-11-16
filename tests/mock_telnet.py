@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """模拟华为 VRP 设备的 telnet 服务端，用于本地端到端验证执行链路。
-行为：发送 telnet 协商垃圾字节 → Login: → Password: → <MockSW> 提示符，
-收到命令回显 + 新提示符；screen-length 0 temporary 也能正常应答。"""
+行为：telnet 协商 → Login:/Password: → <MockSW> 提示符；
+带状态模拟：display ip routing-table 的 0.0.0.0/0 下一跳随切换命令变化，
+display current-configuration 显示当前挂 route-policy import 的 peer。"""
 import socket
 import socketserver
-import threading
 import sys
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 12345
@@ -13,18 +13,21 @@ USER = "admin"
 PASS = "Mock@123"
 PROMPT = "<MockSW>"
 
-NEG = bytes([255, 251, 1, 255, 251, 3, 255, 253, 24])  # IAC WILL ECHO / WILL SGA / DO NAWS
+PEERS = ["192.168.130.2", "192.168.130.10", "192.168.130.22"]
+POLICY = {"192.168.130.2": "vd", "192.168.130.10": "im", "192.168.130.22": "im4"}
+CURRENT_NH = {"nh": "192.168.130.10"}   # 全局状态，跨连接保持（模拟真实设备）
 
 
 class Handler(socketserver.BaseRequestHandler):
     def handle(self):
         s = self.request
-        s.sendall(NEG + "\r\nWelcome to Mock VRP\r\n".encode())
+        current_nh = CURRENT_NH["nh"]
+        s.sendall(bytes([255, 251, 1, 255, 251, 3, 255, 253, 24]) + "\r\nWelcome to Mock VRP\r\n".encode())
 
         def send(t):
             s.sendall(t.encode())
 
-        def recv_line(expect_user):
+        def recv_line():
             buf = b""
             while True:
                 d = s.recv(1024)
@@ -37,24 +40,44 @@ class Handler(socketserver.BaseRequestHandler):
                     return line
 
         send("Login:")
-        user = recv_line(True)
-        if user != USER:
-            send("Error: invalid user\r\nLogin:")
+        if recv_line() != USER:
+            send("Error: invalid user\r\n")
             return
         send("Password:")
-        pw = recv_line(False)
-        if pw != PASS:
+        if recv_line() != PASS:
             send("Error: wrong password\r\n")
             return
         send("\r\n" + PROMPT + "\r\n")
         while True:
-            line = recv_line(False)
+            line = recv_line()
             if line in ("quit", "exit"):
                 send("Bye\r\n")
                 return
-            # 模拟真实回显: 命令本身 + 输出 + 提示符
-            out = "  Info: command '%s' executed ok on MockSW" % line
-            send(PROMPT + line + "\r\n" + out + "\r\n" + PROMPT + "\r\n")
+            if "display ip routing-table" in line:
+                out = ("Route Flags: R - relay, D - download to fib\r\n"
+                       "------------------------------------------------------------------------------\r\n"
+                       "Routing Tables: Public\r\n"
+                       "Destinations : 9        Routes : 9\r\n\r\n"
+                       "Destination/Mask    Proto   Pre  Cost   Flags NextHop         Interface\r\n\r\n"
+                       "   0.0.0.0/0        BGP     255  3      D    %s          GigabitEthernet0/1\r\n"
+                       "  127.0.0.0/8       Direct  0    0      D    127.0.0.1       InLoop0\r\n"
+                       "192.168.130.0/24    Direct  0    0      D    192.168.130.5   GigabitEthernet0/1\r\n") % current_nh
+                send(PROMPT + line + "\r\n" + out + PROMPT + "\r\n")
+            elif "display current-configuration" in line:
+                peers = "".join(
+                    "  peer %s route-policy %s import\r\n" % (p, POLICY[p])
+                    for p in PEERS if p == current_nh)
+                out = ("bgp 65320\r\n address-family ipv4 unicast\r\n"
+                       + (peers or "  (no import policy peer)\r\n"))
+                send(PROMPT + line + "\r\n" + out + PROMPT + "\r\n")
+            else:
+                # 切换命令: 模拟 peer X route-policy ... import 生效
+                for p in PEERS:
+                    if p in line and "peer" in line and "route-policy" in line and "undo" not in line:
+                        current_nh = p
+                        CURRENT_NH["nh"] = p
+                out = "  Info: command '%s' executed ok on MockSW" % line
+                send(PROMPT + line + "\r\n" + out + PROMPT + "\r\n")
 
 
 class Server(socketserver.ThreadingTCPServer):
@@ -63,5 +86,5 @@ class Server(socketserver.ThreadingTCPServer):
 
 if __name__ == "__main__":
     srv = Server(("127.0.0.1", PORT), Handler)
-    print("[mock] telnet mock device listening on 127.0.0.1:%d (user=%s pass=%s)" % (PORT, USER, PASS))
+    print("[mock] telnet mock device on 127.0.0.1:%d (admin/Mock@123, 初始生效线路=Airtel)" % PORT)
     srv.serve_forever()

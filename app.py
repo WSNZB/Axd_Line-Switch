@@ -135,6 +135,9 @@ def init_db():
         init_command TEXT DEFAULT 'screen-length 0 temporary',
         prompt TEXT DEFAULT '',
         timeout INTEGER DEFAULT 10,
+        status_command TEXT DEFAULT 'display ip routing-table',
+        current_regex TEXT DEFAULT '',
+        line_map TEXT DEFAULT '',
         enabled INTEGER DEFAULT 1,
         remark TEXT DEFAULT '',
         created_at TEXT
@@ -148,6 +151,8 @@ def init_db():
         match_keywords TEXT DEFAULT '',
         command_block TEXT DEFAULT '',
         rollback_block TEXT DEFAULT '',
+        verify_block TEXT DEFAULT '',
+        expect_keywords TEXT DEFAULT '',
         cooldown INTEGER DEFAULT 0,
         enabled INTEGER DEFAULT 1,
         remark TEXT DEFAULT '',
@@ -164,6 +169,8 @@ def init_db():
         dry_run INTEGER DEFAULT 0,
         rollback INTEGER DEFAULT 0,
         status TEXT DEFAULT 'running',
+        precheck_line TEXT DEFAULT '',
+        session_log TEXT DEFAULT '',
         error TEXT DEFAULT '',
         matched_note TEXT DEFAULT '',
         started_at TEXT,
@@ -175,6 +182,7 @@ def init_db():
         seq INTEGER,
         command TEXT,
         output TEXT DEFAULT '',
+        raw_output TEXT DEFAULT '',
         ok INTEGER DEFAULT 1,
         ts TEXT
     );
@@ -183,6 +191,20 @@ def init_db():
         v TEXT
     );
     """)
+    # 兼容旧库：补列
+    for tbl, col, ddl in [
+        ("devices", "status_command", "TEXT DEFAULT 'display ip routing-table'"),
+        ("devices", "current_regex", "TEXT DEFAULT ''"),
+        ("devices", "line_map", "TEXT DEFAULT ''"),
+        ("actions", "verify_block", "TEXT DEFAULT ''"),
+        ("actions", "expect_keywords", "TEXT DEFAULT ''"),
+        ("exec_logs", "precheck_line", "TEXT DEFAULT ''"),
+        ("exec_logs", "session_log", "TEXT DEFAULT ''"),
+        ("exec_steps", "raw_output", "TEXT DEFAULT ''"),
+    ]:
+        cols = [r[1] for r in c.execute("PRAGMA table_info(%s)" % tbl)]
+        if col not in cols:
+            c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (tbl, col, ddl))
     # 默认设置
     for k, v in [("web_password", "admin123"),
                  ("api_token", "lsk-" + uuid.uuid4().hex[:24]),
@@ -320,6 +342,9 @@ class DeviceSession(object):
         self.master_fd = None
         self.logged_in = False
         self.log_lines = []      # 登录阶段过程记录
+        self.transcript = []     # 完整会话原文 [(方向, 文本), ...] 排障用
+        self.login_raw = ""      # 登录阶段原始输出
+        self.last_raw = ""       # 最近一条命令的原始回显
 
     # ---- 底层 ----
     def _read_some(self, wait):
@@ -353,6 +378,8 @@ class DeviceSession(object):
         return None
 
     def _send(self, text):
+        shown = "******" if text == self.password and self.password else text
+        self.transcript.append(("TX", shown))
         data = (text + "\r\n") if self.kind == "telnet" else (text + "\n")
         if self.kind == "telnet":
             self.sock.sendall(data.encode("utf-8"))
@@ -382,36 +409,41 @@ class DeviceSession(object):
 
         deadline = time.time() + max(20, self.timeout * 2)
         saw_password = False
-        while time.time() < deadline:
-            text = self.buf.decode("utf-8", "replace")
-            tail = text[-400:]
-            if prompt_re.search(tail):
-                self.logged_in = True
-                break
-            if err_re.search(text) and not saw_password:
-                raise RuntimeError("连接失败: " + tail.strip()[-200:])
-            if yes_re.search(tail):
-                self._send("yes")
-                self.buf = b""
-                continue
-            if passwd_re.search(tail):
-                if saw_password:
-                    raise RuntimeError("认证失败（用户名或密码错误）")
-                self.log_lines.append("发送密码")
-                self._send(self.password)
-                self.buf = b""
-                saw_password = True
-                continue
-            if login_re.search(tail) and not saw_password:
-                self.log_lines.append("发送用户名: %s" % (self.user or "(空)"))
-                self._send(self.user or "\r")
-                self.buf = b""
-                continue
-            chunk = self._read_some(0.3)
-            if chunk:
-                self.buf += _strip_iac(chunk) if self.kind == "telnet" else chunk
-        else:
-            raise RuntimeError("登录超时（%ds 内未出现设备提示符）" % max(20, self.timeout * 2))
+        try:
+            while time.time() < deadline:
+                text = self.buf.decode("utf-8", "replace")
+                tail = text[-400:]
+                if prompt_re.search(tail):
+                    self.logged_in = True
+                    break
+                if err_re.search(text) and not saw_password:
+                    raise RuntimeError("连接失败: " + tail.strip()[-200:])
+                if yes_re.search(tail):
+                    self._send("yes")
+                    self.buf = b""
+                    continue
+                if passwd_re.search(tail):
+                    if saw_password:
+                        raise RuntimeError("认证失败（用户名或密码错误）")
+                    self.log_lines.append("发送密码")
+                    self._send(self.password)
+                    self.buf = b""
+                    saw_password = True
+                    continue
+                if login_re.search(tail) and not saw_password:
+                    self.log_lines.append("发送用户名: %s" % (self.user or "(空)"))
+                    self._send(self.user or "\r")
+                    self.buf = b""
+                    continue
+                chunk = self._read_some(0.3)
+                if chunk:
+                    self.buf += _strip_iac(chunk) if self.kind == "telnet" else chunk
+            else:
+                raise RuntimeError("登录超时（%ds 内未出现设备提示符）" % max(20, self.timeout * 2))
+        finally:
+            # 无论成功失败都保存登录阶段原文，供排障
+            self.login_raw = self.buf.decode("utf-8", "replace")
+            self.transcript.append(("RX", "[登录阶段]\n" + self.login_raw))
 
         if not self.logged_in:
             raise RuntimeError("登录失败（口令错误或提示符不匹配）")
@@ -438,33 +470,46 @@ class DeviceSession(object):
     def send_cmd(self, cmd, no_wait=False):
         """发送一条命令。no_wait=True 时(quit/exit 类)发送后不等待提示符回归。"""
         self.buf = b""
-        self._send(cmd)
+        try:
+            self._send(cmd)
+        except (BrokenPipeError, OSError):
+            if no_wait:
+                self.log_lines.append("> " + cmd + "  (会话已断开)")
+                self.last_raw = "(会话已断开，无法获取回显)"
+                return "(session closed)"
+            raise
         if no_wait:
             # quit/exit 等断开类命令：设备会话关闭，无提示符可等
             self.log_lines.append("> " + cmd + "  (断开会话)")
+            self.last_raw = "(该命令不等待回显，会话已断开)"
             return "(session closed)"
         time.sleep(0.15)
         text = self._read_until([self.prompt_re], self.timeout)
         if text is None:
-            text = self.buf.decode("utf-8", "replace")
-            raise RuntimeError("命令超时未回归提示符: %s | 尾部回显: %s" % (cmd, text[-200:].replace("\n", " | ")))
-        # 清理回显：去掉 echo 回来的命令行本身与提示符行
-        out_lines = text.splitlines()
+            raw = self.buf.decode("utf-8", "replace")
+            self.last_raw = raw
+            self.transcript.append(("RX", raw))
+            raise RuntimeError("命令超时未回归提示符: %s | 尾部回显: %s" % (cmd, raw[-200:].replace("\n", " | ")))
+        self.last_raw = text
+        self.transcript.append(("RX", text))
+        # 清理回显：去掉命令 echo 行、整行提示符，并剥离行尾粘连的提示符（保留正文）
+        prompt_only = re.compile(r'^[<\[][\w\-.:/@]+[>\]]$')
+        prompt_tail = re.compile(r'[<\[][\w\-.:/@]+[>\]]\s*$')
         cleaned = []
-        for ln in out_lines:
+        for ln in text.splitlines():
             s = ln.strip()
             if not s:
                 continue
-            if s.endswith(cmd) or s == cmd:
+            if prompt_only.match(s):
                 continue
-            if self.prompt_re.search(ln) and not cleaned:
+            if s == cmd or s.endswith(cmd):
                 continue
-            cleaned.append(ln.rstrip())
+            s2 = prompt_tail.sub("", s).strip()
+            if not s2:
+                continue
+            cleaned.append(s2)
         self.log_lines.append("> " + cmd)
-        # 去掉尾部残留的提示符行
-        while cleaned and self.prompt_re.search(cleaned[-1]):
-            cleaned.pop()
-        return "\n".join(cleaned[-60:])
+        return "\n".join(cleaned)
 
     def close(self):
         try:
@@ -499,6 +544,50 @@ def parse_block(block):
     return cmds
 
 
+def parse_line_map(text):
+    """线路映射文本 → dict，每行 'IP=线路名' 或 'IP:线路名'，'#' 注释。"""
+    m = {}
+    for ln in (text or "").splitlines():
+        s = ln.strip()
+        if not s or s.startswith("#"):
+            continue
+        sep = "=" if "=" in s else (":" if ":" in s else None)
+        if not sep:
+            continue
+        k, v = s.split(sep, 1)
+        m[k.strip()] = v.strip()
+    return m
+
+
+def parse_current_line(output, line_map_text, custom_regex=""):
+    """从状态命令回显中解析当前生效线路。
+    优先用自定义正则(捕获组1)；否则默认解析 0.0.0.0/0 路由行的 NextHop(排除 Direct/127.x)。
+    再经线路映射转换为线路名；无映射时返回原始标识。"""
+    ident = None
+    if (custom_regex or "").strip():
+        try:
+            mm = re.search(custom_regex, output or "")
+            if mm:
+                ident = mm.group(1) if mm.groups() else mm.group(0)
+        except re.error:
+            pass
+    if not ident:
+        for ln in (output or "").splitlines():
+            s = ln.strip()
+            if s.startswith("0.0.0.0/0") or re.match(r"^0\.0\.0\.0(\s|/0)", s):
+                if "Direct" in s or "InLoop" in s:
+                    continue
+                ips = [x for x in re.findall(r"(?:\d{1,3}\.){3}\d{1,3}", s)
+                       if not x.startswith("127.") and x != "0.0.0.0"]
+                if ips:
+                    ident = ips[0]
+                    break
+    if not ident:
+        return ""
+    lm = parse_line_map(line_map_text)
+    return lm.get(ident, ident)
+
+
 # --------------------------------------------------------------- 执行器 --
 def _dev_lock(device_id):
     with _DEV_LOCKS_GUARD:
@@ -507,17 +596,28 @@ def _dev_lock(device_id):
         return _DEV_LOCKS[device_id]
 
 
-def _run_session(dev, conn, log_id, cmds, dry_run):
-    """登录设备并逐条下发命令。返回 (ok, error, 登录过程文本)。"""
-    log = conn.execute("SELECT * FROM exec_logs WHERE id=?", (log_id,)).fetchone()
+def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=None):
+    """登录设备：查当前线路 → 下发切换命令 → 执行验证命令。
+    返回 (ok, error, 登录过程文本, 切换前当前线路, 验证是否通过)。"""
     password = decrypt_pw(dev["password_enc"])
     sess = DeviceSession(dev, password)
     login_note = ""
     try:
         sess.connect()
         login_note = "\n".join(sess.log_lines)
+        precheck_line = ""
+        # 切换前：查询当前生效线路（演练也执行，用于"只看不切"）
+        if (dev["status_command"] or "").strip():
+            try:
+                out = sess.send_cmd(dev["status_command"].strip())
+                precheck_line = parse_current_line(out, dev["line_map"], dev["current_regex"])
+                login_note += "\n[切换前] 当前生效线路: %s" % (precheck_line or "未识别(见上方回显)")
+            except Exception as e:
+                login_note += "\n[切换前] 状态查询失败: %s" % e
+        conn.execute("UPDATE exec_logs SET precheck_line=? WHERE id=?", (precheck_line, log_id))
+        conn.commit()
         if dry_run:
-            return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令"
+            return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令", precheck_line, True
         for i, cmd in enumerate(cmds, 1):
             seq_row = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
                                    (log_id,)).fetchone()
@@ -530,13 +630,70 @@ def _run_session(dev, conn, log_id, cmds, dry_run):
                     ok, err = 0, "设备回显疑似错误: " + out[-200:]
             except Exception as e:
                 ok, err = 0, str(e)
-            conn.execute("INSERT INTO exec_steps(log_id,seq,command,output,ok,ts) VALUES(?,?,?,?,?,?)",
-                         (log_id, i, cmd, (out or err)[:4000], ok, now()))
+            conn.execute("INSERT INTO exec_steps(log_id,seq,command,output,raw_output,ok,ts) "
+                         "VALUES(?,?,?,?,?,?,?)",
+                         (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
             conn.commit()
             if not ok:
-                return False, "第 %d 条命令失败: %s | %s" % (i, cmd, err), login_note
-        return True, "", login_note
+                return False, "第 %d 条命令失败: %s | %s" % (i, cmd, err), login_note, precheck_line, False
+        # 切换后验证：用独立会话重新登录执行（切换命令块的 quit 可能已断开会话）
+        verify_ok = True
+        verr = ""
+        if verify_cmds or expect_kws:
+            vsess = None
+            try:
+                vsess = DeviceSession(dev, password)
+                vsess.connect()
+                vout_all = []
+                for j, vcmd in enumerate(verify_cmds or [], 1):
+                    try:
+                        vout = vsess.send_cmd(vcmd)
+                        vok = 1
+                    except Exception as e:
+                        vout, vok = str(e), 0
+                    vout_all.append(vout or "")
+                    seq = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
+                                       (log_id,)).fetchone()[0]
+                    conn.execute("INSERT INTO exec_steps(log_id,seq,command,output,raw_output,ok,ts) "
+                                 "VALUES(?,?,?,?,?,?,?)",
+                                 (log_id, seq, "[验证] " + vcmd, (vout or "")[:8000],
+                                  (vsess.last_raw or "")[:20000], vok, now()))
+                    conn.commit()
+                    if not vok:
+                        verify_ok = False
+                        verr = "验证命令执行失败: %s | %s" % (vcmd, vout[-150:])
+                if verify_ok and expect_kws:
+                    vtext = "\n".join(vout_all)
+                    missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
+                    if missing:
+                        verify_ok = False
+                        verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
+                                "（切换前线路: %s，可能路由未收敛或切换失败）"
+                                % (",".join(missing), precheck_line or "未知"))
+            except Exception as e:
+                verify_ok = False
+                verr = "验证会话登录失败: %s" % e
+            finally:
+                if vsess:
+                    # 验证会话的完整收发并入主会话原文
+                    sess.transcript.append(("--", "[验证会话开始：重新登录设备]"))
+                    sess.transcript.extend(vsess.transcript)
+                    vsess.close()
+        return True, verr, login_note, precheck_line, verify_ok
     finally:
+        # 保存完整会话原文（含登录 banner / 每条命令收发 / 验证会话），排障用
+        try:
+            parts = []
+            for direction, text in sess.transcript:
+                if direction == "--":
+                    parts.append("\n" + text)
+                else:
+                    parts.append("[%s] %s" % (direction, text))
+            conn.execute("UPDATE exec_logs SET session_log=? WHERE id=?",
+                         ("\n".join(parts)[:100000], log_id))
+            conn.commit()
+        except Exception:
+            pass
         sess.close()
 
 
@@ -560,12 +717,21 @@ def execute_action(log_id):
                          (now(), log_id))
             conn.commit()
             return
+        verify_cmds = parse_block(act["verify_block"]) if not log["rollback"] else []
+        expect_kws = [k.strip() for k in (act["expect_keywords"] or "").split(",") if k.strip()]
         try:
-            ok, err, note = _run_session(dev, conn, log_id, cmds, log["dry_run"])
+            ok, err, note, precheck_line, verify_ok = _run_session(
+                dev, conn, log_id, cmds, log["dry_run"], verify_cmds, expect_kws)
         except Exception as e:
-            ok, err, note = False, str(e), ""
+            ok, err, note, precheck_line, verify_ok = False, str(e), "", "", False
+        if ok and verify_ok:
+            status = "success"
+        elif ok and not verify_ok:
+            status = "verify_failed"
+        else:
+            status = "failed"
         conn.execute("UPDATE exec_logs SET status=?, error=?, matched_note=?, finished_at=? WHERE id=?",
-                     ("success" if ok else "failed", err or "", note or "", now(), log_id))
+                     (status, err or "", note or "", now(), log_id))
         conn.commit()
     finally:
         conn.close()
@@ -610,7 +776,7 @@ def submit_action(conn, action, trigger, title, dry_run=0, rollback=0):
                 pass
     cur = conn.execute(
         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,alarm_title,"
-        "dry_run,rollback,status,started_at) VALUES(?,?,?,?,?,?,?,?, 'running', ?)",
+        "dry_run,rollback,status,precheck_line,started_at) VALUES(?,?,?,?,?,?,?,?, 'running', '', ?)",
         (action["id"], action["name"], dev["id"], dev["name"], trigger, title or "",
          dry_run, rollback, now()))
     conn.commit()
@@ -822,9 +988,10 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/api/devices(?:/(\d+))?/?(test|exec)?$", path)
             if path == "/api/devices":
                 return self._crud_device(conn, body, None)
-            m2 = re.match(r"^/api/devices/(\d+)/(test)$", path)
+            m2 = re.match(r"^/api/devices/(\d+)/(test|status)$", path)
             if m2:
-                return self._device_test(conn, int(m2.group(1)))
+                return self._device_test(conn, int(m2.group(1)),
+                                         want_status=(m2.group(2) == "status"))
             # ---- CRUD: actions ----
             if path == "/api/actions":
                 return self._crud_action(conn, body, None)
@@ -908,7 +1075,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"error": "设备不存在"}, 404)
         fields = {}
         for k in ("site_id", "name", "host", "port", "protocol", "username",
-                  "init_command", "prompt", "timeout", "enabled", "remark"):
+                  "init_command", "prompt", "timeout", "enabled", "remark",
+                  "status_command", "current_regex", "line_map"):
             if k in body:
                 fields[k] = body[k]
         if body.get("password"):
@@ -938,7 +1106,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"error": "动作不存在"}, 404)
         fields = {}
         for k in ("site_id", "name", "device_id", "match_type", "match_keywords",
-                  "command_block", "rollback_block", "cooldown", "enabled", "remark"):
+                  "command_block", "rollback_block", "verify_block", "expect_keywords",
+                  "cooldown", "enabled", "remark"):
             if k in body:
                 fields[k] = body[k]
         if act_id:
@@ -955,13 +1124,21 @@ class Handler(BaseHTTPRequestHandler):
         conn.commit()
         return self._send_json({"id": cur.lastrowid})
 
-    def _device_test(self, conn, dev_id):
+    def _device_test(self, conn, dev_id, want_status=False):
         dev = conn.execute("SELECT * FROM devices WHERE id=?", (dev_id,)).fetchone()
         if not dev:
             return self._send_json({"error": "设备不存在"}, 404)
         try:
             sess = DeviceSession(dev, decrypt_pw(dev["password_enc"]))
             sess.connect()
+            if want_status:
+                scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
+                out = sess.send_cmd(scmd)
+                line = parse_current_line(out, dev["line_map"], dev["current_regex"])
+                sess.close()
+                return self._send_json({"ok": True, "current_line": line or "未识别",
+                                        "command": scmd,
+                                        "note": sess.log_lines, "banner": out[:800]})
             ver = ""
             try:
                 ver = sess.send_cmd("display version")[:500]
@@ -1072,6 +1249,7 @@ th{color:var(--sub);font-weight:500;white-space:nowrap}
 .tag{display:inline-block;padding:1px 8px;border-radius:10px;font-size:12px}
 .tag.success{background:#e6f7ef;color:var(--ok)} .tag.failed{background:#fdeaea;color:var(--bad)}
 .tag.running{background:#eaf1fe;color:var(--pri)} .tag.cooldown{background:#fff7e6;color:var(--warn)}
+.tag.verify_failed{background:#fff0e0;color:#c25a00}
 .muted{color:var(--sub);font-size:12px}
 .grid2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
 .grid3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
@@ -1114,7 +1292,7 @@ pre.out .err{color:#ff9c9c}
 <div id="p-dash">
   <div class="stat" id="stat"></div>
   <div class="card">
-    <h3>执行记录 <span class="muted">（点击行查看每条命令回显；30 秒自动刷新）</span>
+    <h3>执行记录 <span class="muted">（点击行查看每条命令回显与会话原文；30 秒自动刷新）</span>
       <button class="btn sm" onclick="loadLogs()" style="float:right">刷新</button></h3>
     <table><thead><tr><th>ID</th><th>时间</th><th>触发</th><th>告警标题</th><th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
     <tbody id="logtb"></tbody></table>
@@ -1210,10 +1388,13 @@ pre.out .err{color:#ff9c9c}
   <textarea id="a_cmd" rows="10"></textarea>
   <label>回切命令块（可选，手动触发用）</label>
   <textarea id="a_rb" rows="6"></textarea>
+  <label>验证命令块（可选，切换完成后执行并检查期望内容，如 display ip routing-table）</label>
+  <textarea id="a_verify" rows="3" placeholder="display ip routing-table"></textarea>
   <div class="grid2">
+    <div><label>期望关键词（逗号分隔，须全部出现在验证回显中）</label><input id="a_expect" placeholder="如：192.168.130.2（切到 Vodacom 后 0.0.0.0 的下一跳）"></div>
     <div><label>冷却时间(秒，0=用全局)</label><input id="a_cd" type="number" value="0"></div>
-    <div class="sw"><input type="checkbox" id="a_en" checked><span>启用</span></div>
   </div>
+  <div class="sw"><input type="checkbox" id="a_en" checked><span>启用</span></div>
   <div class="mfoot">
     <button class="btn" onclick="closeM('mAct')">取消</button>
     <button class="btn warn" onclick="execAction(false)">保存前不执行</button>
@@ -1244,10 +1425,17 @@ pre.out .err{color:#ff9c9c}
     <div><label>提示符正则(空=默认)</label><input id="d_prompt" placeholder="默认华为/H3C"></div>
     <div><label>超时(秒)</label><input id="d_to" type="number" value="10"></div>
   </div>
+  <div class="grid2">
+    <div><label>状态查询命令(查当前生效线路)</label><input id="d_scmd" value="display ip routing-table" placeholder="留空则查线路时用 display ip routing-table"></div>
+    <div><label>当前线路正则(空=默认解析 0.0.0.0/0 行下一跳)</label><input id="d_cregex" placeholder="如: 0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)"></div>
+  </div>
+  <label>线路映射（每行一条：下一跳IP=线路名，# 注释）</label>
+  <textarea id="d_lmap" rows="4" placeholder="192.168.130.2=Vodacom&#10;192.168.130.10=Airtel&#10;192.168.130.22=4G"></textarea>
   <div class="sw"><input type="checkbox" id="d_en" checked><span>启用</span></div>
   <div class="mfoot">
     <button class="btn" onclick="closeM('mDev')">取消</button>
     <button class="btn ok" onclick="testDevice()">测试连接</button>
+    <button class="btn warn" onclick="queryDeviceLine()">查当前线路</button>
     <button class="btn pri" onclick="saveDevice()">保存</button>
   </div>
   <pre class="out" id="d_test" style="display:none;margin-top:10px"></pre>
@@ -1307,16 +1495,18 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td>${l.id}</td><td>${esc(l.started_at)}</td><td>${l.trigger=="api"?"API":"手动"}</td>
     <td>${esc(l.alarm_title)||"-"}</td><td>${esc(l.action_name)}</td><td>${esc(l.device_name)}</td>
     <td>${l.dry_run?"演练":(l.rollback?"回切":"切换")}</td>
-    <td><span class="tag ${l.status}">${l.status=="cooldown_skip"?"冷却跳过":esc(l.status)}</span></td>
+    <td><span class="tag ${l.status}">${l.status=="cooldown_skip"?"冷却跳过":(l.status=="verify_failed"?"验证未过":esc(l.status))}</span></td>
     <td class="muted">${esc(l.error).slice(0,40)}</td></tr>`).join(""):"<tr><td colspan=9 class=muted>暂无记录</td></tr>"})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
-  $("mLogTitle").textContent=`执行详情 #${l.id} · ${l.action_name} · ${l.status}`;
-  let h=`<div class="muted" style="margin-bottom:8px">告警标题: ${esc(l.alarm_title)||"-"} | 开始: ${esc(l.started_at)} | 结束: ${esc(l.finished_at)||"-"}</div>`;
+  $("mLogTitle").textContent=`执行详情 #${l.id} · ${l.action_name} · ${l.status=="verify_failed"?"验证未过":l.status}`;
+  let h=`<div class="muted" style="margin-bottom:8px">告警标题: ${esc(l.alarm_title)||"-"} | 切换前当前线路: <b>${esc(l.precheck_line)||"未查询"}</b> | 开始: ${esc(l.started_at)} | 结束: ${esc(l.finished_at)||"-"}</div>`;
   if(l.error)h+=`<div style="color:var(--bad);margin-bottom:8px">错误: ${esc(l.error)}</div>`;
-  if(l.matched_note)h+=`<pre class="out">${esc(l.matched_note)}</pre>`;
+  if(l.matched_note)h+=`<details style="margin-bottom:8px"><summary class="muted">登录过程摘要</summary><pre class="out">${esc(l.matched_note)}</pre></details>`;
+  if(l.session_log)h+=`<details style="margin-bottom:8px"><summary class="muted">会话原文（登录 banner + 全部收发，排障用）</summary><pre class="out">${esc(l.session_log)}</pre></details>`;
   h+=(l.steps||[]).map(s=>`<div style="margin-top:10px"><b>${s.seq}. ${esc(s.command)}</b>
      <span class="tag ${s.ok?"success":"failed"}">${s.ok?"OK":"FAIL"}</span>
-     <pre class="out ${s.ok?"":"err"}">${esc(s.output)||"(无回显)"}</pre></div>`).join("");
+     <pre class="out ${s.ok?"":"err"}">${esc(s.output)||"(无回显)"}</pre>
+     ${(s.raw_output&&s.raw_output!==s.output)?`<details><summary class="muted">原始回显（含命令回显与提示符）</summary><pre class="out">${esc(s.raw_output)}</pre></details>`:""}</div>`).join("");
   $("mLogBody").innerHTML=h;$("mLog").classList.add("show")})}
 
 // ---- 动作 ----
@@ -1342,12 +1532,15 @@ function editAction(id){const a=DATA.actions.find(x=>x.id==id)||{};
   $("a_id").value=a.id||"";$("a_name").value=a.name||"";$("a_site").value=a.site_id||"";
   $("a_device").value=a.device_id||"";$("a_mtype").value=a.match_type||"contains";
   $("a_kw").value=a.match_keywords||"";$("a_cmd").value=a.command_block||"";
-  $("a_rb").value=a.rollback_block||"";$("a_cd").value=a.cooldown||0;$("a_en").checked=!!a.enabled||!a.id;
+  $("a_rb").value=a.rollback_block||"";$("a_verify").value=a.verify_block||"";
+  $("a_expect").value=a.expect_keywords||"";
+  $("a_cd").value=a.cooldown||0;$("a_en").checked=!!a.enabled||!a.id;
   $("mActTitle").textContent=a.id?"编辑动作 #"+a.id:"新建动作";$("mAct").classList.add("show")}
 function saveAction(){const b={id:$("a_id").value||null,name:$("a_name").value.trim(),
   site_id:$("a_site").value?+$("a_site").value:null,device_id:+$("a_device").value||null,
   match_type:$("a_mtype").value,match_keywords:$("a_kw").value.trim(),
   command_block:$("a_cmd").value,rollback_block:$("a_rb").value,
+  verify_block:$("a_verify").value,expect_keywords:$("a_expect").value.trim(),
   cooldown:+$("a_cd").value||0,enabled:$("a_en").checked?1:0};
   if(!b.name||!b.device_id||!b.match_keywords){alert("动作名、设备、匹配关键词必填");return}
   api(b.id?"PUT":"POST",b.id?"/api/actions/"+b.id:"/api/actions",b).then(()=>{
@@ -1369,6 +1562,7 @@ function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
     <td>${x.enabled?'<span class="tag success">启用</span>':'<span class="tag failed">停用</span>'}</td>
     <td style="white-space:nowrap">
       <button class="btn sm ok" onclick="testDeviceById(${x.id})">测试</button>
+      <button class="btn sm warn" onclick="testDeviceByIdStatus(${x.id})">查线路</button>
       <button class="btn sm" onclick="editDevice(${x.id})">编辑</button>
       <button class="btn sm bad" onclick="delDevice(${x.id})">删除</button></td></tr>`).join(""):
     "<tr><td colspan=9 class=muted>暂无设备</td></tr>"})}
@@ -1378,7 +1572,9 @@ function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
   $("d_port").value=d.port||23;$("d_proto").value=d.protocol||"telnet";
   $("d_user").value=d.username||"";$("d_pwd").value="";$("d_epwd").value="";
   $("d_init").value=d.init_command!=null?d.init_command:"screen-length 0 temporary";
-  $("d_prompt").value=d.prompt||"";$("d_to").value=d.timeout||10;$("d_en").checked=!!d.enabled||!d.id;
+  $("d_prompt").value=d.prompt||"";$("d_to").value=d.timeout||10;
+  $("d_scmd").value=d.status_command!=null?d.status_command:"display ip routing-table";
+  $("d_cregex").value=d.current_regex||"";$("d_lmap").value=d.line_map||"";
   $("d_test").style.display="none";
   $("mDevTitle").textContent=d.id?"编辑设备 #"+d.id:"新建设备";$("mDev").classList.add("show")}
 function devBody(){return{id:$("d_id").value||null,name:$("d_name").value.trim(),host:$("d_host").value.trim(),
@@ -1386,6 +1582,8 @@ function devBody(){return{id:$("d_id").value||null,name:$("d_name").value.trim()
   protocol:$("d_proto").value,username:$("d_user").value.trim(),
   password:$("d_pwd").value,enable_password:$("d_epwd").value,
   init_command:$("d_init").value.trim(),prompt:$("d_prompt").value.trim(),
+  status_command:$("d_scmd").value.trim(),current_regex:$("d_cregex").value.trim(),
+  line_map:$("d_lmap").value,
   timeout:+$("d_to").value||10,enabled:$("d_en").checked?1:0}}
 function saveDevice(){const b=devBody();
   if(!b.name||!b.host){alert("设备名与地址必填");return}
@@ -1400,6 +1598,13 @@ function testDevice(){const b=devBody();
     api("POST","/api/devices/"+r.id+"/test",{}).then(t=>_showTest(t,"d_test"))})}}
 function testDeviceById(id){api("POST","/api/devices/"+id+"/test",{}).then(r=>{
   alert(r.ok?"连接成功 ✓":"连接失败: "+(r.error||""))})}
+function queryDeviceLine(){const id=$("d_id").value;if(!id)return alert("请先保存设备");
+  api("POST","/api/devices/"+id+"/status",{}).then(r=>{
+    const o=$("d_test");o.style.display="block";
+    if(r.ok){o.textContent="当前生效线路: "+(r.current_line||"未识别")+"\n查询命令: "+r.command+"\n\n回显:\n"+(r.banner||"")}
+    else{o.textContent="查询失败: "+(r.error||"")}})}
+function testDeviceByIdStatus(id){api("POST","/api/devices/"+id+"/status",{}).then(r=>{
+  alert(r.ok?("当前生效线路: "+(r.current_line||"未识别")):"查询失败: "+(r.error||""))})}
 
 // ---- 站点 ----
 function loadSites(){api("GET","/api/sites").then(s=>{DATA.sites=s;
