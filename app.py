@@ -166,6 +166,7 @@ def init_db():
         site_id INTEGER NOT NULL,
         name TEXT NOT NULL,
         alarm_keywords TEXT DEFAULT '',
+        nexthop_ip TEXT DEFAULT '',
         priority INTEGER DEFAULT 1,
         enabled INTEGER DEFAULT 1,
         remark TEXT DEFAULT '',
@@ -236,6 +237,7 @@ def init_db():
         ("exec_logs", "source_line", "TEXT DEFAULT ''"),
         ("exec_logs", "decision_note", "TEXT DEFAULT ''"),
         ("exec_logs", "timeline", "TEXT DEFAULT ''"),
+        ("lines", "nexthop_ip", "TEXT DEFAULT ''"),
         ("exec_steps", "raw_output", "TEXT DEFAULT ''"),
     ]:
         cols = [r[1] for r in c.execute("PRAGMA table_info(%s)" % tbl)]
@@ -779,11 +781,17 @@ def parse_current_line(output, line_map_text, custom_regex="", with_ip=False, ex
 
 
 def site_line_ip_map(conn, site_id):
-    """站点线路的告警关键词中出现的 IP → 线路名，作为设备线路映射的自动回退。
-    用户在「站点线路」里把下一跳 IP 填为关键词时，无需在设备里重复配置线路映射。"""
+    """线路映射的唯一维护处 = 站点线路：
+    ① 线路的「下一跳IP」字段（精确，优先）；
+    ② 告警关键词中出现的 IP（兼容旧填法，回退）。"""
     m = {}
     if not site_id:
         return m
+    for ln in conn.execute("SELECT name,alarm_keywords,nexthop_ip FROM lines WHERE site_id=? AND enabled=1",
+                           (site_id,)).fetchall():
+        ip = (ln["nexthop_ip"] or "").strip()
+        if ip:
+            m[ip] = ln["name"]
     for ln in conn.execute("SELECT name,alarm_keywords FROM lines WHERE site_id=? AND enabled=1",
                            (site_id,)).fetchall():
         for w in (ln["alarm_keywords"] or "").split(","):
@@ -834,9 +842,9 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
             try:
                 out = sess.send_cmd(dev["status_command"].strip())
                 emap = site_line_ip_map(conn, dev["site_id"])
-                precheck_line = parse_current_line(out, dev["line_map"], dev["current_regex"], extra_map=emap)
+                precheck_line = parse_current_line(out, "", dev["current_regex"], extra_map=emap)
                 # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
-                precheck_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True, extra_map=emap)
+                precheck_disp = parse_current_line(out, "", dev["current_regex"], with_ip=True, extra_map=emap)
                 login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
                 tl_append(conn, log_id, "当前生效线路: %s" % (precheck_disp or "未识别(见步骤回显)"))
             except Exception as e:
@@ -1360,9 +1368,10 @@ class Handler(BaseHTTPRequestHandler):
                 if not name or not body.get("site_id"):
                     return self._send_json({"error": "线路名称与所属站点必填"}, 400)
                 cur = conn.execute(
-                    "INSERT INTO lines(site_id,name,alarm_keywords,priority,enabled,remark,created_at) "
-                    "VALUES(?,?,?,?,?,?,?)",
+                    "INSERT INTO lines(site_id,name,alarm_keywords,nexthop_ip,priority,enabled,remark,created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?)",
                     (int(body["site_id"]), name, body.get("alarm_keywords") or "",
+                     (body.get("nexthop_ip") or "").strip(),
                      int(body.get("priority") or 1), 1 if body.get("enabled", 1) else 0,
                      body.get("remark") or "", now()))
                 conn.commit()
@@ -1517,13 +1526,13 @@ class Handler(BaseHTTPRequestHandler):
                     scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
                     out = s.send_cmd(scmd)
                     emap = site_line_ip_map(conn, dev["site_id"])
-                    line = parse_current_line(out, dev["line_map"], dev["current_regex"], extra_map=emap)
-                    line_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True, extra_map=emap)
+                    line = parse_current_line(out, "", dev["current_regex"], extra_map=emap)
+                    line_disp = parse_current_line(out, "", dev["current_regex"], with_ip=True, extra_map=emap)
                     s.close()
                     note = s.log_lines
                     if line and line_disp == line and re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", line):
-                        note = note + ["提示: 下一跳 %s 未匹配到线路名——可在设备编辑的「线路映射」补一行 %s=线路名，"
-                                       "或在该站点的「站点线路」告警关键词中加入该 IP" % (line, line)]
+                        note = note + ["提示: 下一跳 %s 未匹配到线路名——请在该站点的「站点线路」中，"
+                                       "把对应线路的「下一跳IP」填为 %s" % (line, line)]
                     return {"ok": True, "current_line": line_disp or "未识别",
                             "command": scmd, "note": note, "banner": out[:800]}
                 ver = ""
@@ -1567,7 +1576,7 @@ class Handler(BaseHTTPRequestHandler):
             m = re.match(r"^/api/lines/(\d+)$", path)
             if m:
                 fields = {}
-                for k in ("name", "alarm_keywords", "priority", "enabled", "remark", "site_id"):
+                for k in ("name", "alarm_keywords", "nexthop_ip", "priority", "enabled", "remark", "site_id"):
                     if k in body:
                         fields[k] = body[k]
                 if fields:
@@ -2087,8 +2096,6 @@ details summary:hover{color:var(--primary)}
     <div><label>状态查询命令(查当前生效线路)</label><input id="d_scmd" value="display ip routing-table" placeholder="留空则用 display ip routing-table"></div>
     <div><label>当前线路正则(空=默认解析 0.0.0.0/0 下一跳)</label><input id="d_cregex" placeholder="如: 0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)"></div>
   </div>
-  <label>线路映射（下一跳IP=线路名，每行一条，# 注释）<span class="q" title="把设备路由表里 0.0.0.0/0 的下一跳 IP 对应到线路名。若该设备所属站点已在「站点线路」的告警关键词里填了该 IP，会自动识别，无需在此重复配置。">?</span></label>
-  <textarea id="d_lmap" rows="4" placeholder="192.168.130.2=Vodacom&#10;192.168.130.10=Airtel&#10;192.168.130.22=4G"></textarea>
   <label class="sw"><input type="checkbox" id="d_en" checked><span>启用该设备</span></label>
   <pre class="out" id="d_test" style="display:none;margin-top:12px"></pre>
   </div>
@@ -2118,13 +2125,16 @@ details summary:hover{color:var(--primary)}
 
 <!-- 站点线路 -->
 <div class="modal" id="mLine"><div class="box" style="width:780px">
-  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" title="线路关键词用于两个判定：①识别告警说的是哪条线路；②查 AIOps 活跃告警判断「是否多条线路同时告警」。关键词逗号分隔，全部包含即命中。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
+  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" title="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断是否多条线路同时告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护）。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
-  <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th style="width:90px">优先级</th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
+  <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" title="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">优先级</th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
   <tbody id="ltb"></tbody></table></div>
-  <div class="grid3" style="margin-top:14px">
+  <div class="grid2" style="margin-top:14px">
     <div><label>线路名</label><input id="l_name" placeholder="如 Airtel"></div>
+    <div><label>下一跳IP（该线路生效时 0.0.0.0/0 的 NextHop）</label><input id="l_ip" placeholder="如 192.168.130.10"></div>
+  </div>
+  <div class="grid2">
     <div><label>告警关键词(逗号分隔)</label><input id="l_kw" placeholder="如 41.243.21.170,Airtel"></div>
     <div><label>优先级(1最高)</label><input id="l_pri" type="number" value="1"></div>
   </div>
@@ -2306,7 +2316,7 @@ function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
   $("d_init").value=d.init_command!=null?d.init_command:"screen-length 0 temporary";
   $("d_prompt").value=d.prompt||"";$("d_to").value=d.timeout||10;
   $("d_scmd").value=d.status_command!=null?d.status_command:"display ip routing-table";
-  $("d_cregex").value=d.current_regex||"";$("d_lmap").value=d.line_map||"";
+  $("d_cregex").value=d.current_regex||"";
   $("d_test").style.display="none";
   $("mDevTitle").textContent=d.id?"编辑设备 #"+d.id:"新建设备";$("mDev").classList.add("show")}
 function devBody(){return{id:$("d_id").value||null,name:$("d_name").value.trim(),host:$("d_host").value.trim(),
@@ -2315,7 +2325,6 @@ function devBody(){return{id:$("d_id").value||null,name:$("d_name").value.trim()
   password:$("d_pwd").value,enable_password:$("d_epwd").value,
   init_command:$("d_init").value.trim(),prompt:$("d_prompt").value.trim(),
   status_command:$("d_scmd").value.trim(),current_regex:$("d_cregex").value.trim(),
-  line_map:$("d_lmap").value,
   timeout:+$("d_to").value||10,enabled:$("d_en").checked?1:0}}
 function saveDevice(){const b=devBody();
   if(!b.name||!b.host){showToast("设备名与地址必填",1);return}
@@ -2363,19 +2372,20 @@ function delSite(id){if(confirm("确认删除站点 #"+id+"？"))api("DELETE","/
 // ---- 站点线路（互斥判定依据） ----
 function manageLines(siteId,siteName){$("l_site").value=siteId;
   $("mLineTitle").textContent="站点线路 · "+siteName;
-  $("l_name").value="";$("l_kw").value="";$("l_pri").value=1;
+  $("l_name").value="";$("l_kw").value="";$("l_ip").value="";$("l_pri").value=1;
   loadLines(siteId);$("mLine").classList.add("show")}
 function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
   $("ltb").innerHTML=ls.length?ls.map(l=>`<tr>
     <td><b>${esc(l.name)}</b></td><td><span class="keyword-text mono" style="color:var(--text-muted)">${esc(l.alarm_keywords)||'(空)'}</span></td>
+    <td class="mono" style="color:var(--text-muted)">${esc(l.nexthop_ip)||'-'}</td>
     <td>${l.priority}</td>
     <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=5><div class="empty">暂无线路，请添加（如 Airtel / Vodacom / 4G）</div></td></tr>'})}
+    '<tr><td colspan=6><div class="empty">暂无线路，请添加（如 Airtel / Vodacom / 4G）</div></td></tr>'})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
-  alarm_keywords:$("l_kw").value.trim(),priority:+$("l_pri").value||1};
+  alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim(),priority:+$("l_pri").value||1};
   if(!b.name)return showToast("线路名必填",1);
-  api("POST","/api/lines",b).then(()=>{$("l_name").value="";$("l_kw").value="";
+  api("POST","/api/lines",b).then(()=>{$("l_name").value="";$("l_kw").value="";$("l_ip").value="";
     showToast("线路已添加");loadLines(b.site_id);loadSites()})}
 function delLine(id){if(!confirm("删除该线路？"))return;
   api("DELETE","/api/lines/"+id).then(()=>{loadLines(+$("l_site").value);loadSites()})}

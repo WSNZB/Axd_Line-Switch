@@ -117,10 +117,14 @@ def test_require_line_skip():
 
     conn.execute(
         "INSERT INTO devices(site_id,name,host,port,protocol,username,password_enc,timeout,"
-        "status_command,line_map,enabled,created_at) VALUES(1,'m','127.0.0.1',12399,'telnet','admin',?,8,"
-        "'display ip routing-table',?,1,'now')",
-        (app.encrypt_pw("Mock@123"),
-         "192.168.130.10=Airtel\n192.168.130.22=4G"))
+        "status_command,enabled,created_at) VALUES(1,'m','127.0.0.1',12399,'telnet','admin',?,8,"
+        "'display ip routing-table',1,'now')",
+        (app.encrypt_pw("Mock@123"),))
+    # 线路映射唯一维护处 = 站点线路（下一跳IP 字段）
+    conn.execute("INSERT INTO lines(site_id,name,alarm_keywords,nexthop_ip,priority,enabled) "
+                 "VALUES(1,'Airtel','Airtel','192.168.130.10',1,1)")
+    conn.execute("INSERT INTO lines(site_id,name,alarm_keywords,nexthop_ip,priority,enabled) "
+                 "VALUES(1,'4G','4G','192.168.130.22',2,1)")
     conn.commit()
     dev = conn.execute("SELECT * FROM devices WHERE id=1").fetchone()
     cur = conn.execute("INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
