@@ -445,6 +445,7 @@ class DeviceSession(object):
         self.proc = None
         self.master_fd = None
         self.logged_in = False
+        self.compat = False       # SSH 兼容老设备算法模式
         self.log_lines = []      # 登录阶段过程记录
         self.transcript = []     # 完整会话原文 [(方向, 文本), ...] 排障用
         self.login_raw = ""      # 登录阶段原始输出
@@ -456,13 +457,22 @@ class DeviceSession(object):
             r, _, _ = select.select([self.sock], [], [], wait)
             if not r:
                 return b""
-            chunk = self.sock.recv(4096)
-            return chunk
+            try:
+                return self.sock.recv(4096)
+            except OSError as e:
+                raise RuntimeError("telnet 连接已断开: %s | 设备输出尾部: %s"
+                                   % (e, self.buf.decode("utf-8", "replace")[-200:].strip() or "(无)"))
         else:
             r, _, _ = select.select([self.master_fd], [], [], wait)
             if not r:
                 return b""
-            return os.read(self.master_fd, 4096)
+            try:
+                return os.read(self.master_fd, 4096)
+            except OSError:
+                # pty 已关闭 = ssh 子进程退出（认证失败/算法协商失败/连接被拒等）
+                code = self.proc.poll() if self.proc else None
+                tail = self.buf.decode("utf-8", "replace")[-300:].strip() or "(设备无任何输出)"
+                raise RuntimeError("SSH 进程已退出(退出码=%s)。设备输出尾部: %s" % (code, tail))
 
     def _read_until(self, patterns, timeout):
         """读到任一 pattern 匹配缓冲尾部即返回缓冲文本；超时返回 None。patterns: [compiled]"""
@@ -491,20 +501,63 @@ class DeviceSession(object):
             os.write(self.master_fd, data.encode("utf-8"))
 
     # ---- 登录 ----
-    def connect(self):
+    def _open_transport(self):
+        """建立 telnet 连接或启动 ssh 子进程（self.compat 决定是否用兼容老设备的算法参数）。"""
         if self.kind == "telnet":
             self.sock = socket.create_connection((self.host, self.port), timeout=self.timeout)
             self.sock.setblocking(True)
-        else:
-            self.master_fd, slave = pty.openpty()
-            cmd = ["ssh", "-o", "StrictHostKeyChecking=no",
-                   "-o", "UserKnownHostsFile=/dev/null",
-                   "-o", "ConnectTimeout=%d" % max(5, self.timeout),
-                   "-p", str(self.port), "-l", self.user or "admin", self.host]
-            self.proc = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave,
-                                         close_fds=True, preexec_fn=os.setsid)
-            os.close(slave)
+            return
+        self.master_fd, slave = pty.openpty()
+        cmd = ["ssh", "-o", "StrictHostKeyChecking=no",
+               "-o", "UserKnownHostsFile=/dev/null",
+               "-o", "ConnectTimeout=%d" % max(5, self.timeout),
+               "-p", str(self.port), "-l", self.user or "admin", self.host]
+        if self.compat:
+            # 老款华为/H3C 设备常见：新版 OpenSSH 默认禁用 ssh-rsa/旧 KEX/旧 cipher
+            cmd += ["-o", "HostKeyAlgorithms=+ssh-rsa,ssh-dss",
+                    "-o", "PubkeyAcceptedAlgorithms=+ssh-rsa",
+                    "-o", "KexAlgorithms=+diffie-hellman-group14-sha1,"
+                          "diffie-hellman-group-exchange-sha1,diffie-hellman-group1-sha1",
+                    "-o", "Ciphers=+aes128-cbc,aes256-cbc,3des-cbc",
+                    "-o", "MACs=+hmac-sha1,hmac-sha1-96"]
+        self.proc = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave,
+                                     close_fds=True, preexec_fn=os.setsid)
+        os.close(slave)
 
+    def _cleanup_transport(self):
+        try:
+            if self.proc:
+                self.proc.terminate()
+        except Exception:
+            pass
+        try:
+            if self.master_fd:
+                os.close(self.master_fd)
+        except Exception:
+            pass
+        self.proc = None
+        self.master_fd = None
+        self.buf = b""
+
+    def connect(self):
+        self._open_transport()
+        try:
+            self._login()
+        except RuntimeError as e:
+            # SSH 算法协商失败（老设备 vs 新客户端）→ 自动用兼容参数重试一次
+            msg = str(e)
+            if (self.kind == "ssh" and not self.compat
+                    and re.search(r"(Unable to negotiate|no matching (key exchange|cipher|MAC|host key)|"
+                                  r"ssh-rsa|dh_key|kex)", msg, re.IGNORECASE)):
+                self._cleanup_transport()
+                self.compat = True
+                self.transcript.append(("--", "[兼容模式] 首次连接失败（%s），改用兼容老设备的算法参数重试" % msg[:120]))
+                self._open_transport()
+                self._login()
+            else:
+                raise
+
+    def _login(self):
         login_re = re.compile(r"(ogin:|sername:|user name:)", re.IGNORECASE)
         passwd_re = re.compile(r"assword:", re.IGNORECASE)
         yes_re = re.compile(r"yes/no", re.IGNORECASE)
@@ -522,6 +575,11 @@ class DeviceSession(object):
                     break
                 if err_re.search(text) and not saw_password:
                     raise RuntimeError("连接失败: " + tail.strip()[-200:])
+                if self.proc and self.proc.poll() is not None:
+                    # ssh 客户端已退出（认证失败/算法协商失败/连接被拒等）
+                    raise RuntimeError("SSH 进程已退出(退出码=%s)。设备输出尾部: %s"
+                                       % (self.proc.returncode,
+                                          self.buf.decode("utf-8", "replace")[-300:].strip() or "(设备无任何输出)"))
                 if yes_re.search(tail):
                     self._send("yes")
                     self.buf = b""
