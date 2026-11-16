@@ -551,9 +551,11 @@ class DeviceSession(object):
                # 关掉公钥探测：老设备 SSH 服务端常在收到公钥探测时直接断开连接
                "-o", "PubkeyAuthentication=no",
                "-o", "NumberOfPasswordPrompts=2",
-               # 华为/H3C stelnet 原生用 keyboard-interactive（"User Authentication" 提示），
-               # password 方式仅兜底；提示经 SSH 通道回传，由登录循环应答
-               "-o", "PreferredAuthentications=keyboard-interactive,password"]
+               # password 方式优先：实测老款华为（S6720 V200R011 等）的
+               # keyboard-interactive 握手对 "User Authentication" 两段式提示应答
+               # 会被设备拒绝（sshpass 同现象），而标准 password 方式一次即通过；
+               # 仅支持 keyboard-interactive 的设备由 OpenSSH 自动回落，登录循环应答。
+               "-o", "PreferredAuthentications=password,keyboard-interactive"]
         cmd += extra
         cmd += ["-p", str(self.port), "-l", self.user or "admin", self.host]
         self.proc = subprocess.Popen(cmd, stdin=slave, stdout=slave, stderr=slave,
