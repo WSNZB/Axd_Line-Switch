@@ -1662,7 +1662,8 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .input-group .btn{border-radius:0 6px 6px 0;padding:0 24px}
 .action-buttons{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .action-buttons select{padding:9px 12px;border:1px solid var(--border2);border-radius:6px;font-size:13px;outline:none;background:#fff;width:auto}
-.hint-text{font-size:12px;color:var(--text-muted);margin-left:8px}
+.q{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #b6c2d4;color:#64748b;font-size:10px;font-weight:700;cursor:help;margin-left:7px;vertical-align:middle;flex-shrink:0;line-height:1}
+.q:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-bg)}
 
 /* ============ 弹窗 ============ */
 .modal{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:flex-start;justify-content:center;z-index:100;overflow:auto;padding:48px 16px}
@@ -1759,7 +1760,7 @@ details summary:hover{color:var(--primary)}
 <aside class="sidebar">
   <div class="sidebar-header">
     <div class="logo-icon">A</div>
-    <div class="logo-text"><h1>线路切换平台</h1><p>告警驱动 · 线路自动切换</p></div>
+    <div class="logo-text"><h1>线路切换平台</h1></div>
   </div>
   <div class="nav-group"><div class="nav-title">监控</div>
     <button class="nav-item active" data-p="dash"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg><span>执行记录</span></button></div>
@@ -1778,7 +1779,7 @@ details summary:hover{color:var(--primary)}
 <!-- 主内容 -->
 <main class="main-container">
   <header class="topbar">
-    <div class="page-title"><h2 id="pageTitle">执行记录</h2><p id="pageDesc">切换任务执行历史与结果</p></div>
+    <div class="page-title"><h2 id="pageTitle">执行记录</h2></div>
     <div class="topbar-actions">
       <div class="status-badge"><div class="status-dot"></div>运行中</div>
       <button class="btn btn-secondary btn-sm" onclick="refreshNow()">刷新</button>
@@ -1791,7 +1792,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid" id="stat"></div>
     <div class="card">
-      <div class="card-header"><h3>执行记录<span class="sub">点击行查看每条命令回显与会话原文 · 30 秒自动刷新</span></h3></div>
+      <div class="card-header"><h3>执行记录<span class="q" title="点击任意行查看每条命令回显与会话原文；列表每 30 秒自动刷新">?</span></h3></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:70px">ID</th><th style="width:160px">时间</th><th style="width:80px">触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th style="width:70px">模式</th><th style="width:110px">状态</th><th>错误</th></tr></thead>
@@ -1802,7 +1803,7 @@ details summary:hover{color:var(--primary)}
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
     <div class="card">
-      <div class="card-header"><h3>匹配预检<span class="sub">确认「告警标题 ↔ 站点 / 线路」对应关系是否正确</span></h3></div>
+      <div class="card-header"><h3>匹配预检<span class="q" title="确认「告警标题 ↔ 站点 / 线路」对应关系是否正确">?</span></h3></div>
       <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
         <div class="toolbar-row">
           <div class="input-group">
@@ -1813,15 +1814,13 @@ details summary:hover{color:var(--primary)}
         <div id="mt_out"></div>
         <div class="action-buttons" style="border-top:1px dashed var(--border);padding-top:16px">
           <select id="rp_days"><option value="1">近 1 天</option><option value="7" selected>近 7 天</option><option value="14">近 14 天</option><option value="30">近 30 天</option></select>
-          <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放</button>
-          <span class="hint-text">校验现有规则能覆盖哪些真实告警；未命中清单用于补充关键词。</span>
+          <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" title="校验现有规则能覆盖哪些真实告警；未命中清单用于补充关键词">?</span></button>
         </div>
         <div id="rp_out"></div>
       </div>
     </div>
     <div class="card">
-      <div class="card-header"><h3>切换动作规则</h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
-      <div class="hint" style="margin:16px 24px 0">告警标题 → 动作匹配：包含模式填逗号分隔关键词（<b>全部包含</b>才命中，如 <code>站点A,4G</code>）；正则模式填单个正则。命令块中 <code>#</code> 开头行为注释，执行时自动跳过。</div>
+      <div class="card-header"><h3>切换动作规则<span class="q" title="告警标题 → 动作匹配：包含模式填逗号分隔关键词（全部包含才命中，如 站点A,4G）；正则模式填单个正则。&#10;命令块中 # 开头行为注释，执行时自动跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">动作名 / 设备</th><th style="width:90px">匹配方式</th>
         <th>关键词 / 正则</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
@@ -1844,7 +1843,7 @@ details summary:hover{color:var(--primary)}
   <!-- 站点管理 -->
   <div class="page-view" id="p-sites">
     <div class="card">
-      <div class="card-header"><h3>站点管理<span class="sub">线路关键词用于判定「故障线路」与「多条线路同时告警」</span></h3><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
+      <div class="card-header"><h3>站点管理<span class="q" title="线路关键词用于判定「故障线路」与「多条线路同时告警」">?</span></h3><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:220px">站点名称</th><th>线路</th><th style="width:220px">备注</th><th style="width:220px;text-align:right">操作</th></tr></thead>
       <tbody id="sitetb"></tbody></table></div>
@@ -1854,17 +1853,14 @@ details summary:hover{color:var(--primary)}
   <!-- 全局设置 -->
   <div class="page-view" id="p-settings">
     <div class="card">
-      <div class="card-header"><h3>全局设置</h3></div>
+      <div class="card-header"><h3>全局设置<span class="q" title="告警回调接口：POST /api/alert&#10;Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;响应含 matched / task_id / skip_reason">?</span></h3></div>
       <div class="card-body">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
-        <div class="kv"><label>API Token</label><div class="ctl"><input id="s_token"></div></div>
-        <div class="tip" style="margin:-8px 0 6px 226px">AIOps 回调时带 X-API-Token 请求头</div>
+        <div class="kv"><label>API Token<span class="q" title="AIOps 回调时带 X-API-Token 请求头">?</span></label><div class="ctl"><input id="s_token"></div></div>
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
         <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放/互斥判定）"></div></div>
-        <div class="kv"><label>活跃告警判定窗口(分钟)</label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:220px"></div></div>
-        <div class="tip" style="margin:-8px 0 14px 226px">收到告警时，查近 N 分钟内未恢复的告警判断其它线路是否也异常</div>
-        <div class="hint">告警回调接口：<code>POST /api/alert</code>，Body: <code>{"title":"告警标题"}</code>，响应含 matched / task_id / skip_reason。</div>
+        <div class="kv"><label>活跃告警判定窗口(分钟)<span class="q" title="收到告警时，查近 N 分钟内未恢复的告警，判断其它线路是否也异常">?</span></label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:220px"></div></div>
         <button class="btn btn-primary" onclick="saveCfg()">保存设置</button>
       </div>
     </div>
@@ -1908,8 +1904,7 @@ details summary:hover{color:var(--primary)}
   </div>
   <label>匹配关键词 / 正则（包含模式逗号分隔多个，全部包含才命中）*</label>
   <input id="a_kw" placeholder="如：站点A,4G  或正则  站点A.*4G">
-  <label>切换命令块（每行一条命令，# 开头为注释）</label>
-  <div class="hint" style="margin:4px 0 8px">建议一个方向一个动作：命令块内先 <code>undo</code> 掉其它所有方向的策略，再添加本方向，形成「完整状态」——这样从任意当前状态切过来结果都确定，无需系统排序。</div>
+  <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" title="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
   <textarea id="a_cmd" rows="10"></textarea>
   <label>回切命令块（可选，手动触发用）</label>
   <textarea id="a_rb" rows="5"></textarea>
@@ -1991,10 +1986,9 @@ details summary:hover{color:var(--primary)}
 
 <!-- 站点线路 -->
 <div class="modal" id="mLine"><div class="box" style="width:780px">
-  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><button class="mx" onclick="closeM('mLine')">✕</button></div>
+  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" title="线路关键词用于两个判定：①识别告警说的是哪条线路；②查 AIOps 活跃告警判断「是否多条线路同时告警」。关键词逗号分隔，全部包含即命中。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
-  <div class="hint" style="margin-top:14px">线路关键词用于两个判定：①识别告警说的是哪条线路；②查 AIOps 活跃告警判断「是否多条线路同时告警」。关键词为逗号分隔，全部包含即命中。</div>
   <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th style="width:90px">优先级</th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
   <tbody id="ltb"></tbody></table></div>
   <div class="grid3" style="margin-top:14px">
@@ -2047,7 +2041,7 @@ document.querySelectorAll(".nav-item").forEach(b=>b.onclick=()=>{
   document.querySelectorAll(".nav-item").forEach(x=>x.classList.remove("active"));b.classList.add("active");
   document.querySelectorAll(".page-view").forEach(p=>p.classList.remove("active"));
   $("p-"+b.dataset.p).classList.add("active");
-  $("pageTitle").textContent=PAGE_INFO[b.dataset.p][0];$("pageDesc").textContent=PAGE_INFO[b.dataset.p][1];
+  $("pageTitle").textContent=PAGE_INFO[b.dataset.p][0];
   refresh(b.dataset.p)});
 function refresh(p){
   if(p=="dash"){loadStats();loadLogs()}
