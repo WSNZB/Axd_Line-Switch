@@ -235,6 +235,7 @@ def init_db():
         ("exec_logs", "session_log", "TEXT DEFAULT ''"),
         ("exec_logs", "source_line", "TEXT DEFAULT ''"),
         ("exec_logs", "decision_note", "TEXT DEFAULT ''"),
+        ("exec_logs", "timeline", "TEXT DEFAULT ''"),
         ("exec_steps", "raw_output", "TEXT DEFAULT ''"),
     ]:
         cols = [r[1] for r in c.execute("PRAGMA table_info(%s)" % tbl)]
@@ -801,31 +802,44 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
     sess = DeviceSession(dev, password)
     login_note = ""
     try:
+        tl_append(conn, log_id, "登录设备 %s (%s://%s:%s)"
+                  % (dev["name"], dev["protocol"], dev["host"], dev["port"]))
         sess.connect()
+        tl_append(conn, log_id, "设备登录成功，进入交互会话", "ok")
         login_note = "\n".join(sess.log_lines)
         precheck_line = ""
         precheck_disp = ""
         # 切换前：查询当前生效线路（演练也执行，用于"只看不切"）
         if (dev["status_command"] or "").strip():
+            tl_append(conn, log_id, "查询当前生效线路：执行 %s" % dev["status_command"].strip())
             try:
                 out = sess.send_cmd(dev["status_command"].strip())
                 precheck_line = parse_current_line(out, dev["line_map"], dev["current_regex"])
                 # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
                 precheck_disp = parse_current_line(out, dev["line_map"], dev["current_regex"], with_ip=True)
                 login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
+                tl_append(conn, log_id, "当前生效线路: %s" % (precheck_disp or "未识别(见步骤回显)"))
             except Exception as e:
                 login_note += "\n[切换前] 状态查询失败: %s" % e
+                tl_append(conn, log_id, "当前线路查询失败: %s（不阻断，继续执行）" % e, "warn")
         conn.execute("UPDATE exec_logs SET precheck_line=? WHERE id=?", (precheck_disp, log_id))
         conn.commit()
         if dry_run:
+            tl_append(conn, log_id, "演练模式：验证登录与线路查询链路，不下发切换命令", "ok")
             return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令", precheck_line, True, ""
         # 条件判断：当前生效线路必须是故障线路，否则无需切换
         if require_line and precheck_line:
             req = [x.strip() for x in require_line.split(",") if x.strip()]
             if req and precheck_line not in req:
+                tl_append(conn, log_id, "当前生效线路 %s 非故障线路（%s），无需切换"
+                          % (precheck_disp or precheck_line, "/".join(req)), "warn")
                 return (True, "", login_note + "\n[跳过] 当前生效线路为 %s，非故障线路 %s，无需切换"
                         % (precheck_disp or precheck_line, "/".join(req)), precheck_line, True,
                         "当前生效线路为 %s（非故障线路 %s），无需切换" % (precheck_disp or precheck_line, "/".join(req)))
+            if req:
+                tl_append(conn, log_id, "确认满足切换条件：当前正运行在故障线路上，开始下发切换命令（共 %d 条）" % len(cmds), "ok")
+        else:
+            tl_append(conn, log_id, "开始执行切换命令块（共 %d 条）" % len(cmds), "ok")
         main_outs = []
         for i, cmd in enumerate(cmds, 1):
             seq_row = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
@@ -845,12 +859,15 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                          (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
             conn.commit()
             if not ok:
+                tl_append(conn, log_id, "第 %d/%d 条命令失败: %s" % (i, len(cmds), cmd), "bad")
                 return (False, "第 %d 条命令失败: %s | %s" % (i, cmd, err),
                         login_note, precheck_line, False, "")
+        tl_append(conn, log_id, "切换命令全部下发完成（%d/%d 成功）" % (len(cmds), len(cmds)), "ok")
         # 切换后验证：用独立会话重新登录执行（切换命令块的 quit 可能已断开会话）
         verify_ok = True
         verr = ""
         if expect_kws and not verify_cmds:
+            tl_append(conn, log_id, "验证切换结果：在命令回显中检查期望内容 %s" % "、".join(expect_kws))
             # 未配置验证命令块：直接在切换命令的回显中查找期望内容（省去重新登录）
             vtext = "\n".join(main_outs)
             missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
@@ -859,7 +876,12 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 verr = ("切换命令已下发，但命令回显中未找到期望内容 %s"
                         "（切换前线路: %s，请检查命令块输出或改在验证命令块配置查询命令）"
                         % (",".join(missing), precheck_disp or precheck_line or "未知"))
+                tl_append(conn, log_id, "验证未通过：回显中未找到 %s" % "、".join(missing), "bad")
+            else:
+                tl_append(conn, log_id, "验证通过：期望内容已出现在回显中", "ok")
         elif verify_cmds or expect_kws:
+            tl_append(conn, log_id, "验证切换结果：重新登录设备执行验证命令" if verify_cmds
+                      else "验证切换结果：重新登录设备检查期望内容")
             vsess = None
             try:
                 vsess = DeviceSession(dev, password)
@@ -882,6 +904,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                     if not vok:
                         verify_ok = False
                         verr = "验证命令执行失败: %s | %s" % (vcmd, vout[-150:])
+                        tl_append(conn, log_id, "验证命令失败: %s" % vcmd, "bad")
                 if verify_ok and expect_kws:
                     vtext = "\n".join(vout_all)
                     missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
@@ -890,9 +913,15 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                         verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
                                 "（切换前线路: %s，可能路由未收敛或切换失败）"
                                 % (",".join(missing), precheck_disp or precheck_line or "未知"))
+                        tl_append(conn, log_id, "验证未通过：路由表回显中未找到 %s（可能路由未收敛）"
+                                  % "、".join(missing), "bad")
+                    else:
+                        tl_append(conn, log_id, "验证通过：路由表已指向目标线路（%s）"
+                                  % "、".join(expect_kws), "ok")
             except Exception as e:
                 verify_ok = False
                 verr = "验证会话登录失败: %s" % e
+                tl_append(conn, log_id, "验证会话登录失败: %s" % e, "bad")
             finally:
                 if vsess:
                     # 验证会话的完整收发并入主会话原文
@@ -926,6 +955,7 @@ def execute_action(log_id):
         dev = conn.execute("SELECT * FROM devices WHERE id=?", (log["device_id"],)).fetchone()
         act = conn.execute("SELECT * FROM actions WHERE id=?", (log["action_id"],)).fetchone()
         if not dev or not act:
+            tl_append(conn, log_id, "设备或动作不存在，任务终止", "bad")
             conn.execute("UPDATE exec_logs SET status='failed', error='设备或动作不存在', finished_at=? WHERE id=?",
                          (now(), log_id))
             conn.commit()
@@ -933,6 +963,7 @@ def execute_action(log_id):
         block = (act["rollback_block"] if log["rollback"] else act["command_block"]) or ""
         cmds = parse_block(block)
         if not cmds and not log["dry_run"]:
+            tl_append(conn, log_id, "命令块为空，任务终止", "bad")
             conn.execute("UPDATE exec_logs SET status='failed', error='命令块为空', finished_at=? WHERE id=?",
                          (now(), log_id))
             conn.commit()
@@ -946,6 +977,7 @@ def execute_action(log_id):
                     require_line=(log["source_line"] or "")))
         except Exception as e:
             ok, err, note, precheck_line, verify_ok, skip_reason = False, str(e), "", "", False, ""
+            tl_append(conn, log_id, "执行异常: %s" % e, "bad")
         if skip_reason:
             status = "skipped"
             err = skip_reason
@@ -955,6 +987,10 @@ def execute_action(log_id):
             status = "verify_failed"
         else:
             status = "failed"
+        _FINISH_TXT = {"success": "任务完成：切换成功", "verify_failed": "任务结束：命令已下发但验证未通过",
+                       "failed": "任务失败终止", "skipped": "任务结束：条件不满足未切换"}
+        tl_append(conn, log_id, _FINISH_TXT.get(status, "任务结束: %s" % status),
+                  "ok" if status == "success" else ("bad" if status in ("failed", "verify_failed") else "warn"))
         conn.execute("UPDATE exec_logs SET status=?, error=?, matched_note=?, finished_at=? WHERE id=?",
                      (status, err or "", note or "", now(), log_id))
         conn.commit()
@@ -978,9 +1014,26 @@ def _worker():
                 pass
 
 
+def tl_append(conn, log_id, text, kind="info"):
+    """向执行记录时间线追加一条带时间戳的关键步骤（全链路过程可视化）。"""
+    try:
+        row = conn.execute("SELECT timeline FROM exec_logs WHERE id=?", (log_id,)).fetchone()
+        try:
+            tl = json.loads(row["timeline"] or "[]") if row and row["timeline"] else []
+        except ValueError:
+            tl = []
+        tl.append({"ts": now(), "text": text, "kind": kind})
+        conn.execute("UPDATE exec_logs SET timeline=? WHERE id=?",
+                     (json.dumps(tl, ensure_ascii=False), log_id))
+        conn.commit()
+    except Exception:
+        pass
+
+
 def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
-                  source_line="", decision_note=""):
-    """创建执行记录并入队。返回 (log_id, skip_reason)。冷却/串行判断在此。"""
+                  source_line="", decision_note="", init_tl=None):
+    """创建执行记录并入队。返回 (log_id, skip_reason)。冷却/串行判断在此。
+    init_tl: 告警接入阶段已产生的时间线条目列表。"""
     dev = conn.execute("SELECT * FROM devices WHERE id=?", (action["device_id"],)).fetchone()
     if not dev:
         return None, "设备不存在"
@@ -1000,12 +1053,16 @@ def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
                     return None, "冷却期内（%ds）" % cooldown
             except Exception:
                 pass
+    tl = list(init_tl or [])
+    mode = "演练" if dry_run else ("回切" if rollback else "切换")
+    tl.append({"ts": now(), "kind": "info",
+               "text": "任务入队，等待执行（模式: %s，设备: %s）" % (mode, dev["name"])})
     cur = conn.execute(
         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,alarm_title,"
-        "dry_run,rollback,status,precheck_line,source_line,decision_note,started_at) "
-        "VALUES(?,?,?,?,?,?,?,?, 'running', '', ?,?,? )",
+        "dry_run,rollback,status,precheck_line,source_line,decision_note,started_at,timeline) "
+        "VALUES(?,?,?,?,?,?,?,?, 'running', '', ?,?,?,?)",
         (action["id"], action["name"], dev["id"], dev["name"], trigger, title or "",
-         dry_run, rollback, source_line, decision_note, now()))
+         dry_run, rollback, source_line, decision_note, now(), json.dumps(tl, ensure_ascii=False)))
     conn.commit()
     log_id = cur.lastrowid
     _EXEC_QUEUE.put(log_id)
@@ -1196,12 +1253,32 @@ class Handler(BaseHTTPRequestHandler):
                 if not title:
                     return self._send_json({"matched": False, "error": "缺少告警标题 title"}, 400)
                 hits = match_actions(conn, title)
+                t_recv = now()
+                init_tl = [{"ts": t_recv, "kind": "info", "text": "收到告警回调：%s" % title}]
                 if not hits:
+                    init_tl.append({"ts": now(), "kind": "warn", "text": "未命中任何启用中的动作，流程结束"})
                     return self._send_json({"matched": False, "title": title})
                 act = hits[0]
+                site_row = conn.execute("SELECT name FROM sites WHERE id=?", (act["site_id"] or 0,)).fetchone() \
+                    if act["site_id"] else None
+                init_tl.append({"ts": now(), "kind": "ok",
+                                "text": "命中动作「%s」（站点: %s，命中 %d 个动作取第一个）"
+                                % (act["name"], site_row["name"] if site_row else "未关联", len(hits))})
                 dry_run = 1 if str(body.get("dry_run", "")).lower() in ("1", "true", "yes") else 0
                 # 站点线路互斥判定：多条线路同时告警 / 无法确认故障线路 → 不切换
+                if conn.execute("SELECT 1 FROM lines WHERE site_id=? AND enabled=1 LIMIT 1",
+                                (act["site_id"] or 0,)).fetchone():
+                    init_tl.append({"ts": now(), "kind": "info",
+                                    "text": "开始查询该站点其它线路近 %s 分钟内是否存在活跃告警（互斥判定）"
+                                    % (kv_get(conn, "active_window_min", "30") or 30)})
                 allow, reason, decision = judge_site_alarms(conn, title, act)
+                if decision.get("fault_lines"):
+                    init_tl.append({"ts": now(), "kind": "info",
+                                    "text": "识别故障线路: %s；站点其它活跃告警线路: %s"
+                                    % ("、".join(decision["fault_lines"]),
+                                       "、".join(decision.get("active_lines") or []) or "无")})
+                if decision.get("note"):
+                    init_tl.append({"ts": now(), "kind": "info", "text": decision["note"]})
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
                 base = {"matched": True, "title": title,
                         "action": {"id": act["id"], "name": act["name"], "site_id": act["site_id"]},
@@ -1214,20 +1291,23 @@ class Handler(BaseHTTPRequestHandler):
                                      "note": decision.get("note")}}
                 if not allow:
                     # 记录跳过原因，便于排障与统计
+                    init_tl.append({"ts": now(), "kind": "bad", "text": "判定不切换：%s" % reason})
                     cur = conn.execute(
                         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
-                        "alarm_title,dry_run,rollback,status,source_line,decision_note,started_at,finished_at) "
-                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,? ,?,?)",
+                        "alarm_title,dry_run,rollback,status,source_line,decision_note,started_at,finished_at,timeline) "
+                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,? ,?,?,?,?)",
                         (act["id"], act["name"], act["device_id"], dev["name"] if dev else "",
                          title, dry_run, ",".join(decision.get("fault_lines") or []),
-                         (reason + " | " + decision.get("note", "")), now(), now()))
+                         (reason + " | " + decision.get("note", "")), now(), now(),
+                         json.dumps(init_tl, ensure_ascii=False)))
                     conn.commit()
                     base.update({"task_id": None, "executed": False, "skip_reason": reason,
                                  "skip_reason_code": "site_alarm_condition"})
                     return self._send_json(base)
+                init_tl.append({"ts": now(), "kind": "ok", "text": "互斥判定通过，进入切换流程"})
                 log_id, skip = submit_action(conn, act, "api", title, dry_run=dry_run,
                                              source_line=",".join(decision.get("fault_lines") or []),
-                                             decision_note=decision.get("note", ""))
+                                             decision_note=decision.get("note", ""), init_tl=init_tl)
                 base["task_id"] = log_id
                 if skip:
                     base["executed"] = False
@@ -1278,7 +1358,9 @@ class Handler(BaseHTTPRequestHandler):
                 dry_run = 1 if str(body.get("dry_run", "")).lower() in ("1", "true", "yes") else 0
                 rollback = 1 if str(body.get("rollback", "")).lower() in ("1", "true", "yes") else 0
                 log_id, skip = submit_action(conn, act, "manual", body.get("title") or "",
-                                             dry_run=dry_run, rollback=rollback)
+                                             dry_run=dry_run, rollback=rollback,
+                                             init_tl=[{"ts": now(), "kind": "info",
+                                                       "text": "页面手动触发「%s」" % act["name"]}])
                 if log_id is None:
                     return self._send_json({"executed": False, "skip_reason": skip}, 409)
                 return self._send_json({"executed": True, "task_id": log_id})
@@ -1721,6 +1803,22 @@ pre.out .err{color:#fca5a5}
 .terminal-title{margin-left:16px;font-size:11px;color:#94a3b8}
 .terminal-body{padding:16px;font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12.5px;line-height:1.6;color:#e2e8f0;overflow:auto;max-height:320px;white-space:pre-wrap;word-break:break-all}
 .err-banner{margin-bottom:0}
+
+/* ---- 执行过程时间线 ---- */
+.timeline{position:relative;padding-left:22px;margin-bottom:20px}
+.timeline::before{content:"";position:absolute;left:6px;top:6px;bottom:6px;width:2px;background:var(--border)}
+.tl-item{position:relative;padding:0 0 14px 6px}
+.tl-item:last-child{padding-bottom:0}
+.tl-dot{position:absolute;left:-22px;top:3px;width:12px;height:12px;border-radius:50%;background:#fff;border:2.5px solid var(--text-faint);z-index:1}
+.tl-item.ok .tl-dot{border-color:var(--success)}
+.tl-item.warn .tl-dot{border-color:var(--warn)}
+.tl-item.bad .tl-dot{border-color:var(--danger)}
+.tl-text{font-size:13px;color:var(--text-main);line-height:1.55}
+.tl-item.ok .tl-text{color:#047857}
+.tl-item.warn .tl-text{color:var(--warn-d)}
+.tl-item.bad .tl-text{color:var(--danger-d);font-weight:500}
+.tl-ts{font-size:11px;color:var(--text-faint);font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:2px}
+.timeline-title{font-size:14px;font-weight:600;margin-bottom:12px}
 details{margin:8px 0}
 details summary{cursor:pointer;color:var(--text-muted);font-size:12.5px;padding:4px 0;outline:none}
 details summary:hover{color:var(--primary)}
@@ -2099,6 +2197,10 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
     <div class="meta-item"><span class="meta-label">结束时间</span><span class="meta-value">${esc(l.finished_at)||"-"}</span></div>
     <div class="meta-item"><span class="meta-label">设备</span><span class="meta-value">${esc(l.device_name)||"-"}</span></div>
   </div>`;
+  let tl=[];try{tl=JSON.parse(l.timeline||"[]")}catch(e){}
+  if(tl.length)h+=`<div class="timeline-title">执行过程</div><div class="timeline">`+
+    tl.map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
+      <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div></div>`).join("")+`</div>`;
   if(l.decision_note)h+=`<div class="hint" style="margin-bottom:16px">判定依据：${esc(l.decision_note)}</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
   if(l.matched_note)h+=term("登录过程摘要",l.matched_note,false);
