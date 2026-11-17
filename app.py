@@ -2482,7 +2482,7 @@ document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if
     tip.style.left=left+"px"; tip.style.top=top+"px";
     const ax=r.left+r.width/2-left-5;
     arrow.style.left=Math.max(10,Math.min(ax,tw-20))+"px";
-    if(side==="top"){arrow.style.top="-5px"}else{arrow.style.top="auto";arrow.style.bottom="-5px"}
+    if(side==="top"){arrow.style.top="auto";arrow.style.bottom="-5px"}else{arrow.style.top="-5px";arrow.style.bottom="auto"}
   }
   document.addEventListener("mouseover",e=>{const q=e.target.closest(".q");if(q&&q.dataset.tip)place(q)});
   document.addEventListener("mouseout",e=>{if(e.target.closest(".q"))tip.classList.remove("show")});
