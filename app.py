@@ -1691,10 +1691,6 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 
 /* ============ 主区 ============ */
 .main-container{flex:1;display:flex;flex-direction:column;min-width:0}
-.topbar{height:56px;background:var(--bg-card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 28px;flex-shrink:0}
-.page-title h2{font-size:18px;font-weight:600}
-.page-title p{color:var(--text-muted);font-size:12px;margin-top:2px}
-.topbar-actions{display:flex;align-items:center;gap:16px}
 .status-badge{display:flex;align-items:center;gap:6px;background:var(--success-bg);color:var(--success-d);padding:6px 12px;border-radius:20px;font-size:12px;font-weight:500}
 .status-dot{width:8px;height:8px;background:var(--success);border-radius:50%;animation:pulse 1.8s infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
@@ -1889,7 +1885,6 @@ details summary:hover{color:var(--primary)}
   .stat-grid,.grid2,.grid3,.kv{grid-template-columns:1fr}
   .kv label{text-align:left}
   .content-scroll{padding:16px}
-  .topbar{padding:0 16px}
 }
 </style>
 </head>
@@ -1903,12 +1898,14 @@ details summary:hover{color:var(--primary)}
   <div class="logo-icon">A</div>
   <div class="brand">线路切换平台</div>
   <nav class="top-nav" id="topNav">
-    <button class="active" data-g="monitor">监控</button>
+    <button class="active" data-g="monitor">监控中心</button>
     <button data-g="config">切换配置</button>
     <button data-g="resource">资源管理</button>
-    <button data-g="system">系统</button>
+    <button data-g="system">系统设置</button>
   </nav>
   <div class="header-actions">
+    <div class="status-badge"><div class="status-dot"></div>运行中</div>
+    <button class="btn btn-secondary btn-sm" onclick="refreshNow()">刷新</button>
     <span class="ver-top" id="ver"></span>
     <button class="btn-logout" onclick="logout()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>退出</button>
   </div>
@@ -1922,14 +1919,6 @@ details summary:hover{color:var(--primary)}
 
 <!-- 主内容 -->
 <main class="main-container">
-  <header class="topbar">
-    <div class="page-title"><h2 id="pageTitle">执行记录</h2></div>
-    <div class="topbar-actions">
-      <div class="status-badge"><div class="status-dot"></div>运行中</div>
-      <button class="btn btn-secondary btn-sm" onclick="refreshNow()">刷新</button>
-    </div>
-  </header>
-
   <div class="content-scroll">
 
   <!-- 执行记录 -->
@@ -2189,10 +2178,10 @@ const PAGE_INFO={dash:["执行记录","切换任务执行历史与结果"],match
   devices:["设备管理","站点设备连接与线路识别"],sites:["站点管理","站点与线路配置"],
   settings:["全局设置","接口、令牌与判定参数"],alerttest:["回调测试","模拟告警回调验证链路"]};
 const NAV_GROUPS={
-  monitor:{title:"监 控",items:[["dash","执行记录",'<path d="M3 12h4l3-8 5 16 3-8h4"/>']]},
+  monitor:{title:"监控中心",items:[["dash","执行记录",'<path d="M3 12h4l3-8 5 16 3-8h4"/>']]},
   config:{title:"切换配置",items:[["match","匹配预检",'<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>'],["actions","切换动作",'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>']]},
   resource:{title:"资源管理",items:[["devices","设备管理",'<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/>'],["sites","站点管理",'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>']]},
-  system:{title:"系 统",items:[["settings","全局设置",'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'],["alerttest","回调测试",'<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>']]}};
+  system:{title:"系统设置",items:[["settings","全局设置",'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'],["alerttest","回调测试",'<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>']]}};
 let CUR_PAGE="dash";
 function buildSideNav(g){
   const grp=NAV_GROUPS[g];
@@ -2205,7 +2194,6 @@ function openPage(p){
   document.querySelectorAll(".nav-item").forEach(x=>x.classList.toggle("active",x.dataset.p==p));
   document.querySelectorAll(".page-view").forEach(v=>v.classList.remove("active"));
   $("p-"+p).classList.add("active");
-  $("pageTitle").textContent=PAGE_INFO[p][0];
   refresh(p)}
 document.querySelectorAll("#topNav button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#topNav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");
