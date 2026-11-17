@@ -1804,7 +1804,8 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .tag.gray{background:#f1f5f9;color:#64748b}
 .keyword-text{color:#334155;line-height:1.5;max-width:400px;display:inline-block;word-break:break-all}
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
-.err-text{color:#b91c1c;font-size:12px;line-height:1.6;word-break:break-word}
+.err-text{color:#b91c1c;font-size:12px;line-height:1.5}
+.data-table td.cell1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
@@ -1984,7 +1985,7 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
       <div class="table-responsive"><table class="data-table" style="table-layout:fixed">
-      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:26%"><col style="width:112px"><col style="width:104px"><col style="width:60px"><col style="width:88px"><col></colgroup>
+      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:20%"><col style="width:96px"><col style="width:96px"><col style="width:52px"><col style="width:88px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
@@ -2288,13 +2289,13 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
   $("logtb").innerHTML=ls.length?ls.map(l=>{const st=ST_TAG[l.status]||[esc(l.status),"gray"];
     return `<tr class="clickable" onclick="showLog(${l.id})">
     <td class="mono" style="color:var(--text-muted)">#${l.id}</td>
-    <td class="mono" style="white-space:nowrap;color:var(--text-muted)">${esc(l.started_at)}</td>
+    <td class="mono cell1" style="color:var(--text-muted)">${esc(l.started_at)}</td>
     <td><span class="tag ${l.trigger=="api"?"info":"gray"}">${l.trigger=="api"?"API":"手动"}</span></td>
-    <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="keyword-text" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
-    <td style="overflow:hidden"><b>${esc(l.action_name)}</b></td><td style="overflow:hidden">${esc(l.device_name)}</td>
-    <td style="white-space:nowrap">${l.dry_run?"演练":"切换"}</td>
+    <td class="cell1"><span class="keyword-text">${esc(l.alarm_title)||"-"}</span></td>
+    <td class="cell1"><b>${esc(l.action_name)}</b></td><td class="cell1">${esc(l.device_name)}</td>
+    <td class="cell1">${l.dry_run?"演练":"切换"}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
-    <td style="overflow:hidden"><span class="err-text">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
+    <td class="cell1"><span class="err-text">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
@@ -2532,8 +2533,23 @@ document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if
     arrow.style.left=Math.max(10,Math.min(ax,tw-20))+"px";
     if(side==="top"){arrow.style.top="auto";arrow.style.bottom="-5px"}else{arrow.style.top="-5px";arrow.style.bottom="auto"}
   }
-  document.addEventListener("mouseover",e=>{const q=e.target.closest(".q");if(q&&q.dataset.tip)place(q)});
-  document.addEventListener("mouseout",e=>{if(e.target.closest(".q"))tip.classList.remove("show")});
+  function placeText(el,text){
+    txt.textContent=text;tip.classList.add("show");
+    const r=el.getBoundingClientRect(),tw=tip.offsetWidth,th=tip.offsetHeight,M=8;
+    let left=r.left+r.width/2-tw/2,top=r.bottom+7,side="bottom";
+    if(left<M)left=M;if(left+tw>window.innerWidth-M)left=window.innerWidth-M-tw;
+    if(top+th>window.innerHeight-M){top=r.top-th-7;side="top";}
+    tip.style.left=left+"px";tip.style.top=top+"px";
+    const ax=r.left+r.width/2-left-5;
+    arrow.style.left=Math.max(10,Math.min(ax,tw-20))+"px";
+    if(side==="top"){arrow.style.top="auto";arrow.style.bottom="-5px"}else{arrow.style.top="-5px";arrow.style.bottom="auto"}
+  }
+  document.addEventListener("mouseover",e=>{
+    const q=e.target.closest(".q");if(q&&q.dataset.tip){place(q);return}
+    const c=e.target.closest("td.cell1");
+    if(c&&c.scrollWidth>c.clientWidth+1)placeText(c,c.textContent.trim());
+  });
+  document.addEventListener("mouseout",e=>{if(e.target.closest(".q")||e.target.closest("td.cell1"))tip.classList.remove("show")});
   window.addEventListener("scroll",()=>tip.classList.remove("show"),true);
 })();
 </script>
