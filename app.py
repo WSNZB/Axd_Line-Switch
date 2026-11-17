@@ -1569,16 +1569,22 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/logs":
                 limit = int((qs.get("limit") or ["50"])[0])
                 limit = max(1, min(limit, 300))
+                sql = ("SELECT e.*, COALESCE(si.name,'') AS site_name FROM exec_logs e "
+                       "LEFT JOIN actions a ON e.action_id=a.id "
+                       "LEFT JOIN sites si ON a.site_id=si.id ")
                 aid = (qs.get("action_id") or [None])[0]
                 if aid:
-                    rows = conn.execute("SELECT * FROM exec_logs WHERE action_id=? ORDER BY id DESC LIMIT ?",
+                    rows = conn.execute(sql + "WHERE e.action_id=? ORDER BY e.id DESC LIMIT ?",
                                         (int(aid), limit)).fetchall()
                 else:
-                    rows = conn.execute("SELECT * FROM exec_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+                    rows = conn.execute(sql + "ORDER BY e.id DESC LIMIT ?", (limit,)).fetchall()
                 return self._send_json([dict(r) for r in rows])
             m = re.match(r"^/api/logs/(\d+)$", path)
             if m:
-                log = conn.execute("SELECT * FROM exec_logs WHERE id=?", (int(m.group(1)),)).fetchone()
+                log = conn.execute("SELECT e.*, COALESCE(si.name,'') AS site_name FROM exec_logs e "
+                                   "LEFT JOIN actions a ON e.action_id=a.id "
+                                   "LEFT JOIN sites si ON a.site_id=si.id WHERE e.id=?",
+                                   (int(m.group(1)),)).fetchone()
                 if not log:
                     return self._send_json({"error": "not found"}, 404)
                 steps = conn.execute("SELECT * FROM exec_steps WHERE log_id=? ORDER BY seq", (log["id"],)).fetchall()
@@ -2339,10 +2345,10 @@ details summary:hover{color:var(--primary)}
     <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
       <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
-      <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed">
-      <colgroup><col style="width:40px"><col style="width:178px"><col style="width:46px"><col style="width:357px"><col style="width:175px"><col style="width:112px"><col style="width:52px"><col style="width:76px"><col></colgroup>
+      <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
+      <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col><col style="width:148px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
       <thead><tr>
-        <th>ID</th><th>时间</th><th>触发</th><th>告警标题</th>
+        <th>ID</th><th>时间</th><th>触发</th><th>站点</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
       <tbody id="logtb"></tbody></table></div>
     </div>
@@ -2655,11 +2661,12 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td class="mono" style="color:var(--text-muted)">#${l.id}</td>
     <td class="mono cell1" style="color:var(--text-muted)">${esc(l.started_at)}</td>
     <td><span class="tag gray">${l.trigger=="api"?"API":"手动"}</span></td>
-    <td class="cell1"><span class="keyword-text" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
+    <td class="cell1"><span title="${esc(l.site_name)}">${esc(l.site_name)||"-"}</span></td>
+    <td class="cell1"><span class="keyword-text" style="max-width:260px" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
     <td class="cell1"><b title="${esc(l.action_name)}">${esc(l.action_name)}</b></td><td class="cell1">${esc(l.device_name)}</td>
     <td class="cell1">${l.dry_run?"演练":"切换"}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
-    <td class="cell1"><span class="err-text" title="${esc(l.error)}">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
+    <td class="cell1"><span class="err-text" style="max-width:none" title="${esc(l.error)}">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=10><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
