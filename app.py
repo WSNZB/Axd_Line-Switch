@@ -2090,9 +2090,6 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .page-view{display:none;width:100%;max-width:1800px;margin:0 auto}
 .page-view.active{display:block;animation:fadeIn .22s ease}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
-.page-head{margin-bottom:22px}
-.page-head h2{font-size:20px;font-weight:700;letter-spacing:-.01em;color:var(--text-main);display:flex;align-items:center}
-.page-head p{font-size:13px;color:var(--text-muted);margin-top:5px;line-height:1.5}
 
 /* ============ 卡片 ============ */
 .card{background:var(--bg-card);border-radius:var(--r-card);border:1px solid var(--border);box-shadow:var(--sh-1);margin-bottom:24px;overflow:hidden}
@@ -2344,7 +2341,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
-      <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
+      <div class="card-header"><h3>执行记录<span class="q" data-tip="告警触发的切换任务历史、状态与结果证据。&#10;每 30 秒自动刷新；点击统计卡可按状态筛选。">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
       <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col><col style="width:148px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
       <thead><tr>
@@ -2357,6 +2354,7 @@ details summary:hover{color:var(--primary)}
   <!-- 匹配预检 -->
   <div class="page-view" id="p-match">
     <div class="card">
+      <div class="card-header"><h3>匹配预检<span class="q" data-tip="以告警标题校验规则命中与降级链路，只读查询，不产生任何执行。">?</span></h3></div>
       <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
         <div class="toolbar-row">
           <div class="input-group">
@@ -2377,7 +2375,7 @@ details summary:hover{color:var(--primary)}
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><h3>线路切换覆盖<span class="q" data-tip="多线路站点：每条线路都应出现在某条规则的目标阶梯中。&#10;告警触发时按规则阶梯顺序（=优先级）逐条体检目标线路，选第一条无活跃告警且配了本方向命令的目标；全部告警/缺命令则不切换。&#10;点红色线路名可将其追加到规则阶梯。">?</span></h3>
+      <div class="card-header"><h3>线路切换覆盖<span class="q" data-tip="降级阶梯总览：每条线路都应出现在某条规则的目标阶梯中。&#10;告警触发时按规则阶梯顺序（=优先级）逐条体检目标线路，选第一条无活跃告警且配了本方向命令的目标；全部告警/缺命令则不切换。&#10;点红色线路名可将其追加到规则阶梯。">?</span></h3>
         <button class="btn btn-secondary btn-sm" onclick="loadActions()">刷新</button></div>
       <div class="card-body" id="cov_out"></div>
     </div>
@@ -2415,6 +2413,7 @@ details summary:hover{color:var(--primary)}
   <!-- 全局设置 -->
   <div class="page-view" id="p-settings">
     <div class="card">
+      <div class="card-header"><h3>全局设置<span class="q" data-tip="访问凭据、AIOps 接口与判定参数">?</span></h3></div>
       <div class="card-body">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
         <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认掩码显示；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap"></span></div></div>
@@ -2429,6 +2428,7 @@ details summary:hover{color:var(--primary)}
   <!-- 回调测试 -->
   <div class="page-view" id="p-alerttest">
     <div class="card">
+      <div class="card-header"><h3>回调测试<span class="q" data-tip="模拟 AIOps 告警回调，验证端到端触发链路">?</span></h3></div>
       <div class="card-body">
         <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如 站点A-4G专线中断"></div></div>
         <div style="margin-left:226px"><button class="btn btn-secondary" onclick="testAlert()">发送测试</button></div>
@@ -2615,12 +2615,7 @@ function openPage(p){
   CUR_PAGE=p;
   document.querySelectorAll(".nav-item").forEach(x=>x.classList.toggle("active",x.dataset.p==p));
   document.querySelectorAll(".page-view").forEach(v=>v.classList.remove("active"));
-  const pv=$("p-"+p);pv.classList.add("active");
-  const old=pv.querySelector(".page-head");if(old)old.remove();
-  const info=PAGE_INFO[p];
-  if(info){const hd=document.createElement("div");hd.className="page-head";
-    hd.innerHTML=`<h2>${esc(info[0])}</h2><p>${esc(info[1]||"")}</p>`;
-    pv.insertBefore(hd,pv.firstChild)}
+  $("p-"+p).classList.add("active");
   refresh(p)}
 document.querySelectorAll("#topNav button").forEach(b=>b.onclick=()=>{
   document.querySelectorAll("#topNav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");
