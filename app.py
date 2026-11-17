@@ -378,6 +378,8 @@ def judge_site_alarms(conn, title, action):
                 active.setdefault(ln["name"], []).append(t)
     detail["active_lines"] = list(active.keys())
     detail["active_detail"] = {k: v[:3] for k, v in active.items()}
+    detail["alarms_total"] = len(alarms)
+    detail["checked_lines"] = {ln["name"]: len(active.get(ln["name"], [])) for ln in lines}
     if len(active) >= 2:
         return False, ("站点多条线路同时告警（%s），切换无效，不执行"
                        % "、".join(active.keys())), detail
@@ -1207,8 +1209,11 @@ class Handler(BaseHTTPRequestHandler):
                 ok = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='success'").fetchone()["c"]
                 failed = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='failed'").fetchone()["c"]
                 running = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='running'").fetchone()["c"]
+                skipped = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='skipped'").fetchone()["c"]
+                vfailed = conn.execute("SELECT COUNT(*) c FROM exec_logs WHERE status='verify_failed'").fetchone()["c"]
                 return self._send_json({"total": total, "success": ok, "failed": failed,
-                                        "running": running, "version": VERSION,
+                                        "running": running, "skipped": skipped,
+                                        "verify_failed": vfailed, "version": VERSION,
                                         "started_at": STARTED_AT})
             if path == "/api/sites":
                 rows = conn.execute("SELECT * FROM sites ORDER BY id").fetchall()
@@ -1318,10 +1323,12 @@ class Handler(BaseHTTPRequestHandler):
                 allow, reason, decision = judge_site_alarms(conn, title, act)
                 if decision.get("fault_lines"):
                     _ad = decision.get("active_detail") or {}
-                    _ev = ("窗口 %s 分钟内未恢复告警命中线路：%s"
-                           % (decision.get("window_min"),
-                              "；".join("%s←%s" % (k, "|".join(v)) for k, v in _ad.items())
-                              or "无")) if _ad else ""
+                    _cl = decision.get("checked_lines") or {}
+                    _ev = ("AIOps 窗口 %s 分钟内告警共 %s 条，逐线路关键词匹配结果：\n%s"
+                           % (decision.get("window_min"), decision.get("alarms_total"),
+                              "\n".join("  %s：%s 条活跃告警%s"
+                                         % (k, v, ("←" + " | ".join(_ad[k])) if _ad.get(k) else "（无）")
+                                         for k, v in _cl.items())))
                     init_tl.append({"ts": now(), "kind": "info",
                                     "text": "故障线路：%s；活跃告警线路：%s"
                                     % ("、".join(decision["fault_lines"]),
@@ -1767,7 +1774,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .tag.gray{background:#f1f5f9;color:#64748b}
 .keyword-text{color:#334155;line-height:1.5;max-width:400px;display:inline-block;word-break:break-all}
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
-.err-text{color:var(--danger);font-size:12px;max-width:260px;display:inline-block;word-break:break-all}
+.err-text{color:var(--danger);font-size:12px;display:inline-block;line-height:1.6}
 
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
@@ -2234,7 +2241,9 @@ const STAT=[
  ["total","总执行","#4f46e5","#e0e7ff",'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8"/>'],
  ["success","成功","#10b981","#d1fae5",'<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/>'],
  ["failed","失败","#ef4444","#fee2e2",'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>'],
- ["running","执行中","#f59e0b","#fef3c7",'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>']];
+ ["running","执行中","#f59e0b","#fef3c7",'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
+ ["skipped","条件不满足","#64748b","#e2e8f0",'<path d="M5 12h14"/><path d="M13 5l7 7-7 7"/>'],
+ ["verify_failed","验证未过","#f97316","#ffedd5",'<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>']];
 function loadStats(){api("GET","/api/stats").then(s=>{
   $("ver").textContent=s.version;
   $("stat").innerHTML=STAT.map(x=>`<div class="stat-card">
@@ -2252,7 +2261,7 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td><b>${esc(l.action_name)}</b></td><td>${esc(l.device_name)}</td>
     <td>${l.dry_run?"演练":(l.rollback?"回切":"切换")}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
-    <td><span class="err-text">${esc(l.error).slice(0,40)}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
+    <td><span class="err-text">${esc(l.error)}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
