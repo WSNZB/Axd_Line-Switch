@@ -301,8 +301,12 @@ def match_detail(conn, title):
     return hits
 
 
+_AIOPS_TRACE = {}   # 最近一次活跃告警查询的请求/原始响应留痕（供执行证据展示）
+
+
 def fetch_aiops_alarms(conn, minutes=30, max_items=300):
-    """拉取近 N 分钟告警明细（含 is_recover 状态），用于站点线路互斥判定。"""
+    """拉取近 N 分钟告警明细（含 is_recover 状态），用于站点线路互斥判定。
+    实际请求 URL 与首页原始响应记入 _AIOPS_TRACE，供时间线证据核对。"""
     import urllib.parse
     import urllib.request
     token = (kv_get(conn, "aiops_token", "") or "").strip()
@@ -316,15 +320,21 @@ def fetch_aiops_alarms(conn, minutes=30, max_items=300):
     out, offset = [], 0
     while offset < max_items:
         params = {"offset": offset, "limit": min(200, max_items - offset), "search_unit_list": sul}
-        req = urllib.request.Request(api + "?" + urllib.parse.urlencode(params),
-                                     headers={"token": token})
+        full_url = api + "?" + urllib.parse.urlencode(params)
+        _AIOPS_TRACE.setdefault("requests", []).append(full_url)
+        req = urllib.request.Request(full_url, headers={"token": token})
         with urllib.request.urlopen(req, timeout=20) as r:
-            d = json.loads(r.read().decode("utf-8"))
+            raw = r.read().decode("utf-8")
+        d = json.loads(raw)
+        if offset == 0:
+            _AIOPS_TRACE["raw"] = raw[:6000]
         if d.get("code") != 0:
             raise RuntimeError("AIOps 接口返回错误: %s" % str(d)[:160])
         items = (d.get("data") or {}).get("list") or []
         out.extend(items)
         total = (d.get("data") or {}).get("count")
+        _AIOPS_TRACE["count"] = total
+        _AIOPS_TRACE["window"] = (start, end)
         if not items or (total is not None and len(out) >= total):
             break
         offset += 200
@@ -363,10 +373,18 @@ def judge_site_alarms(conn, title, action):
         detail["note"] = "告警标题未匹配到本站点任何线路关键词"
         return False, ("无法确认故障线路：告警标题未匹配站点下任何线路（%s）"
                        % "、".join(ln["name"] for ln in lines)), detail
+    _AIOPS_TRACE.clear()
+    _AIOPS_TRACE["requests"] = []
     try:
         alarms = fetch_aiops_alarms(conn, window)
+        detail["aiops_trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
+                                 "count": _AIOPS_TRACE.get("count"),
+                                 "window": _AIOPS_TRACE.get("window"),
+                                 "raw": _AIOPS_TRACE.get("raw") or ""}
     except Exception as e:
         detail["note"] = "AIOps 活跃告警查询失败，已放行: %s" % e
+        detail["aiops_trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
+                                 "error": str(e)}
         return True, "", detail
     active = {}
     for a in alarms:
@@ -1324,11 +1342,23 @@ class Handler(BaseHTTPRequestHandler):
                 if decision.get("fault_lines"):
                     _ad = decision.get("active_detail") or {}
                     _cl = decision.get("checked_lines") or {}
-                    _ev = ("AIOps 窗口 %s 分钟内告警共 %s 条，逐线路关键词匹配结果：\n%s"
-                           % (decision.get("window_min"), decision.get("alarms_total"),
-                              "\n".join("  %s：%s 条活跃告警%s"
-                                         % (k, v, ("←" + " | ".join(_ad[k])) if _ad.get(k) else "（无）")
-                                         for k, v in _cl.items())))
+                    _tr = decision.get("aiops_trace") or {}
+                    _w = _tr.get("window") or ["", ""]
+                    _lines_ev = ["实际请求（GET，header: token=已配置）："]
+                    for _u in (_tr.get("requests") or ["(未发起：mock 或缓存)"]):
+                        _lines_ev.append("  " + _u)
+                    _lines_ev.append("时间窗: %s ~ %s；接口返回 data.count=%s，实取 %s 条"
+                                     % (_w[0], _w[1], _tr.get("count"), decision.get("alarms_total")))
+                    if _tr.get("error"):
+                        _lines_ev.append("查询异常: %s" % _tr["error"])
+                    _lines_ev.append("逐线路关键词匹配结果：")
+                    for k, v in _cl.items():
+                        _lines_ev.append("  %s：%s 条活跃告警%s"
+                                         % (k, v, ("←" + " | ".join(_ad[k])) if _ad.get(k) else "（无）"))
+                    if _tr.get("raw"):
+                        _lines_ev.append("AIOps 原始响应(首页, 截6000字)：")
+                        _lines_ev.append(_tr["raw"][:6000])
+                    _ev = "\n".join(_lines_ev)
                     init_tl.append({"ts": now(), "kind": "info",
                                     "text": "故障线路：%s；活跃告警线路：%s"
                                     % ("、".join(decision["fault_lines"]),
