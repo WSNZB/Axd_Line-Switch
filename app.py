@@ -609,18 +609,17 @@ def line_steps_evidence_html(plan):
             '<th style="padding:4px 10px 6px 0;text-align:left">告警关键字 / 样例</th>'
             '<th style="padding:4px 10px 6px 0;text-align:center">未处理 / 处理中</th>'
             '<th style="padding:4px 0 6px 0;text-align:left">结论</th></tr>')
-    out = ['<div style="font-size:12px;color:#94a3b8;margin-bottom:8px">判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；随后按各切换规则内配置的目标线路阶梯（顺序=优先级）逐条体检：用目标线路的告警关键字查询 AIOps（未忽略 + 状态为未处理/处理中，不按时间过滤），第一条无活跃告警且已配置本方向切换命令的目标线路即选中。</div>']
+    out = []
     if rows:
         out.append('<table style="border-collapse:collapse;font-size:13px;width:100%%">%s%s</table>'
                    % (head, "".join(rows)))
     if seen_req:
-        out.append('<div style="margin-top:10px;font-size:12px;color:#94a3b8">实际发出的查询请求：</div>')
-        for u in seen_req:
-            out.append('<div style="font-size:12px;color:#cbd5e1;margin-top:3px;font-family:ui-monospace,Menlo,monospace">→ %s</div>' % e(_fmt_req_human(u)))
+        req_lines = "".join('<div style="margin-top:3px;font-family:ui-monospace,Menlo,monospace;color:#64748b">→ %s</div>' % e(_fmt_req_human(u)) for u in seen_req)
+        out.append('<details style="margin-top:8px"><summary>查询请求 %d 条（实际发往 AIOps 的过滤条件）</summary><div style="padding:4px 0 2px;font-size:12px">%s</div></details>' % (len(seen_req), req_lines))
     tr = plan.get("trace") or {}
     if tr.get("raw"):
-        out.append('<div style="margin-top:10px;font-size:12px;color:#94a3b8">AIOps 原始响应（首次查询，截3000字）：</div>'
-                   '<pre style="margin:4px 0 0;font-size:11px;color:#94a3b8;max-height:120px;overflow:auto;white-space:pre-wrap">%s</pre>'
+        out.append('<details style="margin-top:4px"><summary>AIOps 原始响应（首次查询）</summary>'
+                   '<pre style="margin:4px 0 0;font-size:11px;color:#64748b;max-height:120px;overflow:auto;white-space:pre-wrap">%s</pre></details>'
                    % e(tr["raw"][:3000]))
     return "".join(out)
 
@@ -2267,6 +2266,18 @@ pre.out .err{color:#fca5a5}
 .tl-ts{font-size:11px;color:var(--text-faint);font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:2px}
 .tl-ev{margin-top:6px}
 .timeline-title{font-size:14px;font-weight:600;margin-bottom:12px}
+.verdict{display:flex;align-items:center;gap:14px;padding:14px 18px;border-radius:10px;margin-bottom:18px;border:1px solid var(--border);background:var(--bg-subtle)}
+.verdict-tag{font-size:14px;font-weight:700;white-space:nowrap}
+.verdict-route{font-size:14px;color:var(--text-secondary);white-space:nowrap}
+.verdict-route b{font-size:15px;color:var(--text-main)}
+.verdict-why{font-size:12.5px;color:var(--text-muted);line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.verdict.ok{background:var(--success-bg);border-color:var(--success-bd)}.verdict.ok .verdict-tag{color:var(--success-d)}
+.verdict.bad{background:var(--danger-bg);border-color:var(--danger-bd)}.verdict.bad .verdict-tag{color:var(--danger-d)}
+.verdict.warn{background:var(--warn-bg);border-color:var(--warn-bd)}.verdict.warn .verdict-tag{color:var(--warn-d)}
+.verdict.info .verdict-tag{color:var(--info-d)}
+.tl-ev summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);padding:2px 0}
+.tl-ev summary:hover{color:var(--primary)}
+.tl-ev[open]{margin-bottom:2px}
 details{margin:8px 0}
 details summary{cursor:pointer;color:var(--text-muted);font-size:12.5px;padding:4px 0;outline:none}
 details summary:hover{color:var(--primary)}
@@ -2663,20 +2674,28 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
   const term=(title,text,open)=>`<div class="accordion${open?" open":""}"><div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">${title}${ARROW}</div><div class="accordion-content"><div class="terminal-wrapper" style="padding-top:0;border-top:none"><div class="terminal-window"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">Session Transcript</span></div><div class="terminal-body">${esc(text)}</div></div></div></div></div>`;
-  let h=`<div class="meta-grid">
+  // 结论横幅：状态 + 线路变化 + 一句话原因（打开弹窗 1 秒内抓住重点）
+  const CON={success:["ok","✓ 切换成功"],verify_failed:["warn","! 命令已下发，验证未通过"],
+    failed:["bad","✕ 切换失败"],skipped:["gray","— 未切换（条件不满足）"],
+    cooldown_skip:["gray","— 未切换（冷却期内）"],running:["info","执行中…"]};
+  const c=CON[l.status]||[l.status,l.status];
+  const fromLine=(l.precheck_line||l.source_line||"").split(" ")[0]||"-";
+  const toLine=l.status==="success"?(l.target_line||"-"):(l.status==="skipped"||l.status==="cooldown_skip"?fromLine:"-");
+  const why=l.error||l.decision_note||"";
+  let h=`<div class="verdict ${c[0]}">
+    <span class="verdict-tag">${c[1]}</span>
+    <span class="verdict-route">${esc(fromLine)} → <b>${esc(toLine)}</b></span>
+    <span class="verdict-why">${esc(why)}</span></div>
+  <div class="meta-grid">
     <div class="meta-item"><span class="meta-label">告警标题</span><span class="meta-value title">${esc(l.alarm_title)||"-"}</span></div>
-    <div class="meta-item"><span class="meta-label">故障线路</span><span class="meta-value">${esc(l.source_line)||"-"}</span></div>
-    <div class="meta-item"><span class="meta-label">切换前当前线路</span><span class="meta-value">${esc(l.precheck_line)||"未查询"}</span></div>
-    <div class="meta-item"><span class="meta-label">开始时间</span><span class="meta-value">${esc(l.started_at)}</span></div>
-    <div class="meta-item"><span class="meta-label">结束时间</span><span class="meta-value">${esc(l.finished_at)||"-"}</span></div>
     <div class="meta-item"><span class="meta-label">设备</span><span class="meta-value">${esc(l.device_name)||"-"}</span></div>
+    <div class="meta-item"><span class="meta-label">耗时</span><span class="meta-value">${esc(l.started_at)} → ${esc((l.finished_at||"").slice(11))||"-"}</span></div>
   </div>`;
   let tl=[];try{tl=JSON.parse(l.timeline||"[]")}catch(e){}
   if(tl.length)h+=`<div class="timeline-title">执行过程</div><div class="timeline">`+
-    tl.map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
+    tl.filter(t=>!(t.kind=="info"&&!t.evh&&!t.ev&&/^(收到告警|命中站点)/.test(t.text))).map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
       <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div>
-      ${t.evh?`<div class="tl-ev"><div style="margin-top:6px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#fff;color:var(--text-main)"><div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">证据 · 线路体检</div>${t.evh}</div></div>`:(t.ev?`<div class="tl-ev"><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"证据"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></div>`:"")}</div>`).join("")+`</div>`;
-  if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
+      ${t.evh?`<details class="tl-ev"><summary>证据 · 线路体检<span class="q" data-tip="判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。">?</span></summary><div style="margin-top:8px;color:var(--text-main)">${t.evh}</div></details>`:(t.ev?`<details class="tl-ev"${t.kind=="bad"?" open":""}><summary>${t.step?"命令回显":"证据"}</summary><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"Evidence"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></details>`:"")}</div>`).join("")+`</div>`;
   if(l.session_log)h+=term("会话原文",l.session_log,false);
   if((l.steps||[]).length&&!tl.some(t=>t.step))h+=`<div class="timeline-title">命令执行<span class="q" data-tip="旧版记录的回退展示">?</span></div>`+
     l.steps.map(s=>`<div class="accordion${s.ok?"":" open"}">
