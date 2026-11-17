@@ -543,6 +543,83 @@ def plan_switch(conn, title, site_id=None):
     return out
 
 
+def _fmt_req_human(url):
+    """把实际请求 URL 转成人能看懂的一行：接口 + gs关键字 + 过滤条件（解码）。"""
+    import urllib.parse
+    try:
+        pr = urllib.parse.urlparse(url)
+        qs = urllib.parse.parse_qs(pr.query)
+        gs = (qs.get("gs") or [""])[0]
+        sul = (qs.get("search_unit_list") or [""])[0]
+        conds = []
+        try:
+            for u in json.loads(sul):
+                attr, op, sv = u.get("attr"), u.get("operator"), u.get("search") or []
+                if attr == "status":
+                    lab = {0: "未处理", 1: "处理中"}.get(sv[0] if sv else None, sv)
+                    conds.append("状态=%s" % lab)
+                elif attr == "is_ignore":
+                    conds.append("未忽略" if (sv and sv[0] == 0) else "已忽略")
+                else:
+                    conds.append("%s%s%s" % (attr, op, ",".join(map(str, sv))))
+        except Exception:
+            conds.append(sul or "")
+        return "%s%s ｜ 关键字「%s」 ｜ 过滤：%s" % (pr.netloc, pr.path, gs, "、".join(conds))
+    except Exception:
+        return url
+
+
+def line_steps_evidence_html(plan):
+    """降级体检证据 → 结构化 HTML：表格（目标线路/所属规则/告警关键字/未处理/处理中/结论）
+    + 每条查询的可读请求。值均 esc 转义，仅本函数生成的结构为标签。"""
+    import html as _html
+    e = _html.escape
+    rows = []
+    seen_req = set()
+    for s in plan.get("steps") or []:
+        st = s.get("status")
+        concl = _STEP_STATUS_TXT.get(st, str(st))
+        color = {"clear": "#047857", "fault": "#64748b", "active": "#b91c1c",
+                 "no_cmd": "#b91c1c", "query_error": "#b45309",
+                 "no_keyword": "#b45309"}.get(st, "#334155")
+        pending = s.get("pending")
+        handling = s.get("handling")
+        cnt = "-" if pending is None else "%s / %s" % (pending, handling)
+        titles = "、".join(s.get("titles") or [])
+        kw = e(str(s.get("gs") or "-"))
+        if titles:
+            kw += '<div style="color:#94a3b8;font-size:11px;margin-top:2px">样例: %s</div>' % e(titles)
+        err = ('<div style="color:#b45309;font-size:11px">%s</div>' % e(str(s.get("error")))) if s.get("error") else ""
+        rows.append("<tr><td><b>%s</b></td><td>%s</td><td>%s%s</td><td style='text-align:center'>%s</td>"
+                    "<td style='color:%s;font-weight:600'>%s</td></tr>"
+                    % (e(str(s.get("line") or "-")), e(str(s.get("action") or "-")),
+                       kw, err, cnt, color, e(concl)))
+        for u in s.get("requests") or []:
+            if u in seen_req:
+                continue
+            seen_req.add(u)
+    head = ('<tr style="color:#64748b;font-weight:500">'
+            '<th style="padding:4px 10px 6px 0;text-align:left">目标线路</th>'
+            '<th style="padding:4px 10px 6px 0;text-align:left">所属规则</th>'
+            '<th style="padding:4px 10px 6px 0;text-align:left">告警关键字 / 样例</th>'
+            '<th style="padding:4px 10px 6px 0;text-align:center">未处理 / 处理中</th>'
+            '<th style="padding:4px 0 6px 0;text-align:left">结论</th></tr>')
+    out = ['<div style="font-size:12px;color:#94a3b8;margin-bottom:8px">判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；随后按各切换规则内配置的目标线路阶梯（顺序=优先级）逐条体检：用目标线路的告警关键字查询 AIOps（未忽略 + 状态为未处理/处理中，不按时间过滤），第一条无活跃告警且已配置本方向切换命令的目标线路即选中。</div>']
+    if rows:
+        out.append('<table style="border-collapse:collapse;font-size:13px;width:100%%">%s%s</table>'
+                   % (head, "".join(rows)))
+    if seen_req:
+        out.append('<div style="margin-top:10px;font-size:12px;color:#94a3b8">实际发出的查询请求：</div>')
+        for u in seen_req:
+            out.append('<div style="font-size:12px;color:#cbd5e1;margin-top:3px;font-family:ui-monospace,Menlo,monospace">→ %s</div>' % e(_fmt_req_human(u)))
+    tr = plan.get("trace") or {}
+    if tr.get("raw"):
+        out.append('<div style="margin-top:10px;font-size:12px;color:#94a3b8">AIOps 原始响应（首次查询，截3000字）：</div>'
+                   '<pre style="margin:4px 0 0;font-size:11px;color:#94a3b8;max-height:120px;overflow:auto;white-space:pre-wrap">%s</pre>'
+                   % e(tr["raw"][:3000]))
+    return "".join(out)
+
+
 def line_steps_evidence(plan):
     """把降级体检过程拼成可核对的证据文本（含真实请求 URL 与原始响应）。"""
     ev = ["判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；随后按各切换规则内配置的"
@@ -1553,7 +1630,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "text": "命中站点「%s」；故障线路：%s"
                                             % (plan.get("site_name") or "-",
                                                "、".join(plan["fault_lines"])),
-                                    "ev": line_steps_evidence(plan)})
+                                    "ev": line_steps_evidence(plan),
+                                    "evh": line_steps_evidence_html(plan)})
                 if plan.get("target_line"):
                     init_tl.append({"ts": now(), "kind": "ok",
                                     "text": "降级判定选中目标线路：%s（规则：%s）"
@@ -2545,7 +2623,7 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   if(tl.length)h+=`<div class="timeline-title">执行过程</div><div class="timeline">`+
     tl.map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
       <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div>
-      ${t.ev?`<div class="tl-ev"><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"证据"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></div>`:""}</div>`).join("")+`</div>`;
+      ${t.evh?`<div class="tl-ev"><div style="margin-top:6px;border:1px solid var(--border);border-radius:8px;padding:12px 14px;background:#fff;color:var(--text-main)"><div style="font-size:12px;font-weight:600;color:var(--text-muted);margin-bottom:8px">证据 · 线路体检</div>${t.evh}</div></div>`:(t.ev?`<div class="tl-ev"><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"证据"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></div>`:"")}</div>`).join("")+`</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
   if(l.session_log)h+=term("会话原文",l.session_log,false);
   if((l.steps||[]).length&&!tl.some(t=>t.step))h+=`<div class="timeline-title">命令执行<span class="q" data-tip="旧版记录的回退展示">?</span></div>`+
