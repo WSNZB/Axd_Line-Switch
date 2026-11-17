@@ -232,6 +232,7 @@ def init_db():
         ("actions", "verify_block", "TEXT DEFAULT ''"),
         ("actions", "expect_keywords", "TEXT DEFAULT ''"),
         ("actions", "target_line", "TEXT DEFAULT ''"),
+        ("exec_logs", "target_line", "TEXT DEFAULT ''"),
         ("exec_logs", "precheck_line", "TEXT DEFAULT ''"),
         ("exec_logs", "session_log", "TEXT DEFAULT ''"),
         ("exec_logs", "source_line", "TEXT DEFAULT ''"),
@@ -351,55 +352,178 @@ def _kw_match(keywords, text):
     return all(w.lower() in t for w in words)
 
 
-def judge_site_alarms(conn, title, action):
-    """站点线路互斥判定。
-    返回 (allow, reason, detail)：
-      - 站点未配线路 → 放行（不做互斥判定）
-      - 站点多条线路同时在告警 → 拦截
-      - 故障线路之外的线路也在告警 → 拦截
-      - 标题未匹配出故障线路 → 拦截（无法确认哪条线路故障）
-    AIOps 查询失败时放行并记录原因，避免因外部接口异常导致完全不动作。"""
-    site_id = action["site_id"]
-    lines = conn.execute("SELECT * FROM lines WHERE site_id=? AND enabled=1 ORDER BY priority,id",
-                         (site_id,)).fetchall()
-    detail = {"fault_lines": [], "active_lines": [], "note": "", "line_queries": {}}
-    if not lines:
-        detail["note"] = "站点未配置线路，未做互斥判定"
-        return True, "", detail
-    fault_lines = [ln["name"] for ln in lines if _kw_match(ln["alarm_keywords"], title)]
-    detail["fault_lines"] = fault_lines
-    if not fault_lines:
-        detail["note"] = "告警标题未匹配到本站点任何线路关键词"
-        return False, ("无法确认故障线路：告警标题未匹配站点下任何线路（%s）"
-                       % "、".join(ln["name"] for ln in lines)), detail
-    # 对每条"其它线路"用其维护的告警关键字作为 gs，直接查询未处理/处理中告警
+def site_lines(conn, site_id):
+    """站点启用中的线路，按 priority 升序（1 最优先）。"""
+    if not site_id:
+        return []
+    return conn.execute("SELECT * FROM lines WHERE site_id=? AND enabled=1 ORDER BY priority,id",
+                        (site_id,)).fetchall()
+
+
+def action_for_target(conn, site_id, line_name):
+    """取「切到某目标线路」的启用动作：同站点、target_line 名称匹配。
+    兼容旧配置：站点只有一个启用动作且未填目标线路时，视其为该站点唯一切换动作。"""
+    if not site_id:
+        return None
+    rows = conn.execute("SELECT * FROM actions WHERE site_id=? AND enabled=1 ORDER BY id",
+                        (site_id,)).fetchall()
+    name = (line_name or "").strip()
+    if name:
+        for a in rows:
+            if (a["target_line"] or "").strip() == name:
+                return a
+    if len(rows) == 1 and not (rows[0]["target_line"] or "").strip():
+        return rows[0]
+    return None
+
+
+def resolve_fault_sites(conn, title):
+    """按各站点线路的告警关键字匹配标题，返回 ({site_id: [故障线路名...]}, {site_id: 站点名})。"""
+    rows = conn.execute("SELECT l.*, s.name AS site_name FROM lines l "
+                        "LEFT JOIN sites s ON l.site_id=s.id WHERE l.enabled=1 "
+                        "ORDER BY l.site_id, l.priority, l.id").fetchall()
+    faults, site_names = {}, {}
+    for ln in rows:
+        site_names[ln["site_id"]] = ln["site_name"]
+        if _kw_match(ln["alarm_keywords"], title):
+            faults.setdefault(ln["site_id"], []).append(ln["name"])
+    return faults, site_names
+
+
+_STEP_STATUS_TXT = {
+    "fault": "故障线路，排除", "active": "有活跃告警，不可选", "clear": "无活跃告警，可选",
+    "no_action": "无活跃告警，但未配置切到该线路的动作", "no_keyword": "未配置告警关键字，无法查询",
+    "query_error": "查询失败，按不可用跳过", "legacy": "兼容路径：站点未配线路，走动作匹配"}
+
+
+def plan_switch(conn, title, site_id=None):
+    """多线路降级决策。
+    规则：故障线路由告警标题匹配站点线路关键字确定；其余线路按 priority 升序（1 最优先）
+    用各自告警关键字作为 gs 查询 AIOps 未处理/处理中告警（不按时间过滤）；第一条
+    「无活跃告警且已配置切到它动作」的线路即目标线路；全部线路均告警/无可用动作 → 不切换。
+    站点未配置线路时回退按动作匹配关键词直接执行（兼容旧配置）。
+    返回 dict：matched/allow/reason/note/site_id/site_name/fault_lines/target_line/
+              action/steps/trace/legacy。steps 为逐条线路体检明细（供证据展示）。"""
+    out = {"matched": False, "allow": False, "reason": "", "note": "", "site_id": site_id,
+           "site_name": "", "fault_lines": [], "target_line": "", "action": None,
+           "steps": [], "trace": {}, "legacy": False}
+    t = (title or "").strip()
+    if not t:
+        out["reason"] = "缺少告警标题"
+        return out
+    if site_id:
+        site_row = conn.execute("SELECT name FROM sites WHERE id=?", (site_id,)).fetchone()
+        lines = site_lines(conn, site_id)
+        fl = [ln["name"] for ln in lines if _kw_match(ln["alarm_keywords"], t)]
+        faults = {site_id: fl} if fl else {}
+        site_names = {site_id: site_row["name"] if site_row else ""}
+    else:
+        faults, site_names = resolve_fault_sites(conn, t)
+
+    out["site_names"] = site_names
+    if len(faults) > 1:
+        out["matched"] = True
+        out["reason"] = ("告警标题同时命中多个站点的线路（%s），无法确定切换站点"
+                         % "、".join("%s:%s" % (site_names.get(k, k), "/".join(v))
+                                     for k, v in faults.items()))
+        return out
+
+    if not faults:
+        md = match_detail(conn, t)
+        if not md:
+            return out
+        act = md[0]["action"]
+        srow = conn.execute("SELECT name FROM sites WHERE id=?", (act["site_id"] or 0,)).fetchone()
+        out.update({"matched": True, "site_id": act["site_id"], "site_name": srow["name"] if srow else ""})
+        if site_lines(conn, act["site_id"]):
+            out["reason"] = ("站点「%s」已配置线路，但告警标题未匹配到任何线路的告警关键字，"
+                             "请检查站点线路配置" % (srow["name"] if srow else act["site_id"]))
+            out["note"] = "线路关键字未命中标题"
+            return out
+        out.update({"legacy": True, "allow": True, "action": act,
+                    "target_line": (act["target_line"] or "").strip(),
+                    "note": "站点未配置线路，按动作匹配直接执行（不做多线路降级判定）"})
+        out["steps"] = [{"line": out["target_line"] or "(动作默认)", "status": "legacy"}]
+        return out
+
+    sid = list(faults.keys())[0]
+    fl = faults[sid]
+    lines = site_lines(conn, sid)
+    out.update({"matched": True, "site_id": sid, "site_name": site_names.get(sid, ""),
+                "fault_lines": fl, "lines_total": len(lines)})
     _AIOPS_TRACE.clear()
     _AIOPS_TRACE["requests"] = []
-    active = {}
-    try:
-        for ln in lines:
-            if ln["name"] in fault_lines:
-                continue
-            kw = (ln["alarm_keywords"] or "").strip()
-            if not kw:
-                continue
+    target = None
+    for ln in lines:
+        st = {"line": ln["name"], "priority": ln["priority"], "nexthop": ln["nexthop_ip"]}
+        if ln["name"] in fl:
+            st["status"] = "fault"
+            out["steps"].append(st)
+            continue
+        kw = (ln["alarm_keywords"] or "").strip()
+        if not kw:
+            st["status"] = "no_keyword"
+            out["steps"].append(st)
+            continue
+        try:
             q = query_line_active(conn, kw)
-            n = q["pending"] + q["handling"]
-            detail["line_queries"][ln["name"]] = q
-            if n > 0:
-                active[ln["name"]] = q["titles"] or ["(%d 条)" % n]
-    except Exception as e:
-        detail["note"] = "AIOps 活跃告警查询失败，已放行: %s" % e
-        detail["aiops_trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
-                                 "error": str(e)}
-        return True, "", detail
-    detail["aiops_trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or [])}
-    detail["active_lines"] = fault_lines + list(active.keys())
-    detail["active_detail"] = dict(active)
-    if active:
-        return False, ("其它线路同时告警（%s），不执行切换" % "、".join(active.keys())), detail
-    detail["note"] = "其它线路均无未处理/处理中告警，允许切换"
-    return True, "", detail
+        except Exception as e:
+            st.update({"status": "query_error", "gs": kw, "error": str(e)})
+            out["steps"].append(st)
+            continue
+        n = q["pending"] + q["handling"]
+        st.update({"status": "active" if n else "clear", "gs": kw,
+                   "pending": q["pending"], "handling": q["handling"],
+                   "titles": q["titles"], "requests": q.get("requests") or []})
+        out["steps"].append(st)
+        if n:
+            continue
+        act = action_for_target(conn, sid, ln["name"])
+        if not act:
+            st["status"] = "no_action"
+            continue
+        target = (ln, act)
+        break
+
+    out["trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
+                    "raw": _AIOPS_TRACE.get("raw") or ""}
+    if not target:
+        bad = [s for s in out["steps"] if s["status"] != "fault"]
+        out["reason"] = ("站点「%s」无可切换的健康线路：%s"
+                         % (out["site_name"] or sid,
+                            "；".join("%s %s" % (s["line"], _STEP_STATUS_TXT.get(s["status"], s["status"]))
+                                      for s in bad) or "无其它线路"))
+        out["note"] = "降级遍历结束：所有候选线路均在告警或缺少切换动作，本次不切换"
+        return out
+
+    ln, act = target
+    out.update({"allow": True, "target_line": ln["name"], "action": act,
+                "note": "按优先级降级选中目标线路 %s（priority %s）" % (ln["name"], ln["priority"])})
+    return out
+
+
+def line_steps_evidence(plan):
+    """把降级体检过程拼成可核对的证据文本（含真实请求 URL 与原始响应）。"""
+    ev = ["判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；其余线路按 priority 升序"
+          "（1 最优先）用各自告警关键字作为 gs 查询 AIOps（is_ignore=0，status 未处理0/处理中1，"
+          "不按时间过滤），第一条无活跃告警且已配置切换动作的线路即目标线路。"]
+    for s in plan.get("steps") or []:
+        st = s.get("status")
+        head = "线路 %s（priority %s）" % (s.get("line"), s.get("priority"))
+        if st in ("active", "clear", "no_action"):
+            head += "：gs=%s，未处理 %s，处理中 %s" % (s.get("gs"), s.get("pending"), s.get("handling"))
+            if s.get("titles"):
+                head += "；样例: " + " | ".join(s["titles"])
+        if s.get("error"):
+            head += "（%s）" % s["error"]
+        ev.append(head + " → " + _STEP_STATUS_TXT.get(st, str(st)))
+        for u in s.get("requests") or []:
+            ev.append("  实际请求: " + u)
+    tr = plan.get("trace") or {}
+    if tr.get("raw"):
+        ev.append("AIOps 原始响应(首次查询, 截3000字)：")
+        ev.append(tr["raw"][:3000])
+    return "\n".join(ev)
 
 
 def fetch_aiops_titles(conn, days=7, max_items=1000):
@@ -836,10 +960,10 @@ def _with_dev_lock(device_id, timeout, fn):
 
 
 def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=None,
-                 require_line=""):
+                 target_line=""):
     """登录设备：查当前线路 →（条件满足才）下发切换命令 → 执行验证命令。
     返回 (ok, error, 登录过程文本, 切换前当前线路, 验证是否通过, 跳过原因)。
-    require_line 非空时：仅当当前生效线路等于该故障线路才下发切换命令。"""
+    target_line 非空时：当前生效线路已是该目标线路则不下发命令（无需切换）。"""
     password = decrypt_pw(dev["password_enc"])
     sess = DeviceSession(dev, password)
     login_note = ""
@@ -879,17 +1003,16 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         if dry_run:
             tl_append(conn, log_id, "演练模式：不下发切换命令", "ok")
             return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令", precheck_line, True, ""
-        # 条件判断：当前生效线路必须是故障线路，否则无需切换
-        if require_line and precheck_line:
-            req = [x.strip() for x in require_line.split(",") if x.strip()]
-            if req and precheck_line not in req:
-                tl_append(conn, log_id, "当前线路 %s 非故障线路（%s），跳过"
-                          % (precheck_disp or precheck_line, "/".join(req)), "warn")
-                return (True, "", login_note + "\n[跳过] 当前生效线路为 %s，非故障线路 %s，无需切换"
-                        % (precheck_disp or precheck_line, "/".join(req)), precheck_line, True,
-                        "当前生效线路为 %s（非故障线路 %s），无需切换" % (precheck_disp or precheck_line, "/".join(req)))
-            if req:
-                tl_append(conn, log_id, "满足切换条件，下发切换命令（%d 条）" % len(cmds), "ok")
+        # 条件判断：当前生效线路已是目标线路 → 无需切换
+        if target_line and precheck_line:
+            if precheck_line.strip() == target_line.strip():
+                tl_append(conn, log_id, "当前线路 %s 已是目标线路，跳过"
+                          % (precheck_disp or precheck_line), "warn")
+                return (True, "", login_note + "\n[跳过] 当前生效线路已是目标线路 %s，无需切换"
+                        % (precheck_disp or precheck_line), precheck_line, True,
+                        "当前生效线路已是目标线路 %s，无需切换" % (precheck_disp or precheck_line))
+            tl_append(conn, log_id, "满足切换条件（当前 %s → 目标 %s），下发切换命令（%d 条）"
+                      % (precheck_disp or precheck_line, target_line, len(cmds)), "ok")
         else:
             tl_append(conn, log_id, "下发切换命令（%d 条）" % len(cmds), "ok")
         main_outs = []
@@ -1022,11 +1145,14 @@ def execute_action(log_id):
             return
         verify_cmds = parse_block(act["verify_block"]) if not log["rollback"] else []
         expect_kws = [k.strip() for k in (act["expect_keywords"] or "").split(",") if k.strip()]
+        # 目标线路：回切（已隐藏）不做"是否已在目标线路"的跳过判断
+        tgt = "" if log["rollback"] else ((log["target_line"] if "target_line" in log.keys() else "")
+                                          or act["target_line"] or "")
         try:
             ok, err, note, precheck_line, verify_ok, skip_reason = _with_dev_lock(
                 dev["id"], 180, lambda: _run_session(
                     dev, conn, log_id, cmds, log["dry_run"], verify_cmds, expect_kws,
-                    require_line=(log["source_line"] or "")))
+                    target_line=tgt))
         except Exception as e:
             ok, err, note, precheck_line, verify_ok, skip_reason = False, str(e), "", "", False, ""
             tl_append(conn, log_id, "执行异常：%s" % e, "bad")
@@ -1089,9 +1215,9 @@ def tl_append(conn, log_id, text, kind="info", evidence="", step=False):
 
 
 def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
-                  source_line="", decision_note="", init_tl=None):
+                  source_line="", decision_note="", init_tl=None, target_line=""):
     """创建执行记录并入队。返回 (log_id, skip_reason)。冷却/串行判断在此。
-    init_tl: 告警接入阶段已产生的时间线条目列表。"""
+    init_tl: 告警接入阶段已产生的时间线条目列表；target_line: 本次切换的目标线路。"""
     dev = conn.execute("SELECT * FROM devices WHERE id=?", (action["device_id"],)).fetchone()
     if not dev:
         return None, "设备不存在"
@@ -1117,10 +1243,11 @@ def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
                "text": "任务入队（模式：%s，设备：%s）" % (mode, dev["name"])})
     cur = conn.execute(
         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,alarm_title,"
-        "dry_run,rollback,status,precheck_line,source_line,decision_note,started_at,timeline) "
-        "VALUES(?,?,?,?,?,?,?,?, 'running', '', ?,?,?,?)",
+        "dry_run,rollback,status,precheck_line,source_line,decision_note,target_line,started_at,timeline) "
+        "VALUES(?,?,?,?,?,?,?,?, 'running', '', ?,?,?,?,?)",
         (action["id"], action["name"], dev["id"], dev["name"], trigger, title or "",
-         dry_run, rollback, source_line, decision_note, now(), json.dumps(tl, ensure_ascii=False)))
+         dry_run, rollback, source_line, decision_note, target_line or "", now(),
+         json.dumps(tl, ensure_ascii=False)))
     conn.commit()
     log_id = cur.lastrowid
     _EXEC_QUEUE.put(log_id)
@@ -1313,80 +1440,60 @@ class Handler(BaseHTTPRequestHandler):
                          or (parse_qs(parsed.query).get("title") or [""])[0]).strip()
                 if not title:
                     return self._send_json({"matched": False, "error": "缺少告警标题 title"}, 400)
-                hits = match_actions(conn, title)
-                t_recv = now()
-                init_tl = [{"ts": t_recv, "kind": "info", "text": "收到告警：%s" % title}]
-                if not hits:
-                    init_tl.append({"ts": now(), "kind": "warn", "text": "未命中任何启用中的动作，流程结束"})
-                    return self._send_json({"matched": False, "title": title})
-                act = hits[0]
-                site_row = conn.execute("SELECT name FROM sites WHERE id=?", (act["site_id"] or 0,)).fetchone() \
-                    if act["site_id"] else None
-                init_tl.append({"ts": now(), "kind": "ok",
-                                "text": "命中动作：%s（站点：%s）"
-                                % (act["name"], site_row["name"] if site_row else "未关联")})
                 dry_run = 1 if str(body.get("dry_run", "")).lower() in ("1", "true", "yes") else 0
-                # 站点线路互斥判定：多条线路同时告警 / 无法确认故障线路 → 不切换
-                if conn.execute("SELECT 1 FROM lines WHERE site_id=? AND enabled=1 LIMIT 1",
-                                (act["site_id"] or 0,)).fetchone():
-                    init_tl.append({"ts": now(), "kind": "info",
-                                    "text": "互斥判定：按其它线路告警关键字查询未处理/处理中告警"})
-                allow, reason, decision = judge_site_alarms(conn, title, act)
-                if decision.get("fault_lines"):
-                    _ad = decision.get("active_detail") or {}
-                    _lq = decision.get("line_queries") or {}
-                    _tr = decision.get("aiops_trace") or {}
-                    _lines_ev = ["判定逻辑：其它线路用各自告警关键字作为 gs 查询"
-                                 "（is_ignore=0 且 status=未处理0/处理中1，不按时间过滤），count>0 即在告警。"]
-                    for _nm, _q in _lq.items():
-                        _lines_ev.append("线路 %s（gs=%s）：未处理 %s，处理中 %s%s"
-                                         % (_nm, (_q.get("gs_label") or ""),
-                                            _q.get("pending"), _q.get("handling"),
-                                            ("；样例: " + " | ".join(_q.get("titles") or [])) if _q.get("titles") else ""))
-                        for _u in (_q.get("requests") or []):
-                            _lines_ev.append("  实际请求: " + _u)
-                    if not _lq:
-                        _lines_ev.append("  (无其它线路需查询，或未发起：mock 环境)")
-                    if _tr.get("error"):
-                        _lines_ev.append("查询异常: %s" % _tr["error"])
-                    if _tr.get("raw"):
-                        _lines_ev.append("AIOps 原始响应(首次查询, 截3000字)：")
-                        _lines_ev.append(_tr["raw"][:3000])
-                    _ev = "\n".join(_lines_ev)
-                    _others_act = [k for k in _ad]
-                    init_tl.append({"ts": now(), "kind": "info",
-                                    "text": "故障线路：%s；其它线路在告警：%s"
-                                    % ("、".join(decision["fault_lines"]),
-                                       "、".join(_others_act) or "无"),
-                                    "ev": _ev})
-                dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
+                plan = plan_switch(conn, title)
+                init_tl = [{"ts": now(), "kind": "info", "text": "收到告警：%s" % title}]
+                if not plan["matched"]:
+                    return self._send_json({"matched": False, "title": title,
+                                            "note": plan.get("reason") or "未命中任何站点线路/动作"})
+                act = plan["action"]
                 base = {"matched": True, "title": title,
-                        "action": {"id": act["id"], "name": act["name"], "site_id": act["site_id"]},
-                        "device": dict(dev) if dev else None,
-                        "matched_total": len(hits),
-                        "decision": {"allow": allow, "reason": reason,
-                                     "fault_lines": decision.get("fault_lines"),
-                                     "active_lines": decision.get("active_lines"),
-                                     "note": decision.get("note")}}
-                if not allow:
-                    # 记录跳过原因，便于排障与统计
+                        "action": ({"id": act["id"], "name": act["name"], "site_id": act["site_id"]}
+                                   if act else None),
+                        "device": None,
+                        "decision": {"allow": plan["allow"], "reason": plan["reason"],
+                                     "note": plan["note"], "site": plan.get("site_name"),
+                                     "fault_lines": plan.get("fault_lines"),
+                                     "target_line": plan.get("target_line"),
+                                     "steps": [{k: s.get(k) for k in ("line", "priority", "status",
+                                                                      "pending", "handling")}
+                                               for s in plan.get("steps") or []]}}
+                # 逐条线路降级体检证据（真实 gs 请求 + 原始响应）
+                if plan.get("fault_lines"):
+                    init_tl.append({"ts": now(), "kind": "info",
+                                    "text": "命中站点「%s」；故障线路：%s"
+                                            % (plan.get("site_name") or "-",
+                                               "、".join(plan["fault_lines"])),
+                                    "ev": line_steps_evidence(plan)})
+                if plan.get("target_line"):
+                    init_tl.append({"ts": now(), "kind": "ok",
+                                    "text": "降级判定选中目标线路：%s" % plan["target_line"]})
+                if not plan["allow"]:
+                    reason = plan["reason"] or "判定不切换"
                     init_tl.append({"ts": now(), "kind": "bad", "text": "判定不切换：%s" % reason})
-                    cur = conn.execute(
+                    _did = act["device_id"] if act else None
+                    dev = conn.execute("SELECT name FROM devices WHERE id=?", (_did,)).fetchone() if _did else None
+                    base["device"] = dict(dev) if dev else None
+                    conn.execute(
                         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
-                        "alarm_title,dry_run,rollback,status,source_line,decision_note,started_at,finished_at,timeline) "
-                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,?,?,?,?)",
-                        (act["id"], act["name"], act["device_id"], dev["name"] if dev else "",
-                         title, dry_run, ",".join(decision.get("fault_lines") or []),
-                         (reason + " | " + decision.get("note", "")), now(), now(),
-                         json.dumps(init_tl, ensure_ascii=False)))
+                        "alarm_title,dry_run,rollback,status,source_line,decision_note,target_line,"
+                        "started_at,finished_at,timeline) "
+                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,?,?,?,?,?)",
+                        (act["id"] if act else None, act["name"] if act else "(无可用动作)",
+                         _did, dev["name"] if dev else "",
+                         title, dry_run, ",".join(plan.get("fault_lines") or []),
+                         (reason + " | " + plan.get("note", "")), plan.get("target_line") or "",
+                         now(), now(), json.dumps(init_tl, ensure_ascii=False)))
                     conn.commit()
                     base.update({"task_id": None, "executed": False, "skip_reason": reason,
-                                 "skip_reason_code": "site_alarm_condition"})
+                                 "skip_reason_code": "no_target_line"})
                     return self._send_json(base)
-                init_tl.append({"ts": now(), "kind": "ok", "text": "互斥判定通过"})
+                dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
+                base["device"] = dict(dev) if dev else None
                 log_id, skip = submit_action(conn, act, "api", title, dry_run=dry_run,
-                                             source_line=",".join(decision.get("fault_lines") or []),
-                                             decision_note=decision.get("note", ""), init_tl=init_tl)
+                                             source_line=",".join(plan.get("fault_lines") or []),
+                                             decision_note=plan.get("note", ""), init_tl=init_tl,
+                                             target_line=plan.get("target_line") or "")
                 base["task_id"] = log_id
                 if skip:
                     base["executed"] = False
@@ -1466,9 +1573,28 @@ class Handler(BaseHTTPRequestHandler):
                                 "site": site["name"] if site else "", "reason": h["reason"],
                                 "device": dict(dev) if dev else None,
                                 "command_lines": len(parse_block(a["command_block"]))})
-                return self._send_json({"title": title, "matched": bool(out),
-                                        "would_execute": out[0]["action_name"] if out else None,
-                                        "hits": out})
+                # 多线路降级预演：按站点线路识别故障线路并挑目标（只读查询 AIOps，不执行）
+                with_dry = str(body.get("dry", "")).lower() not in ("0", "false", "no")
+                plan = None
+                if with_dry and title:
+                    try:
+                        p = plan_switch(conn, title)
+                        plan = {"matched": p["matched"], "allow": p["allow"],
+                                "site": p.get("site_name"), "fault_lines": p.get("fault_lines"),
+                                "target_line": p.get("target_line"),
+                                "reason": p.get("reason"), "note": p.get("note"),
+                                "legacy": p.get("legacy"),
+                                "action_name": p["action"]["name"] if p["action"] else None,
+                                "steps": [{k: s.get(k) for k in ("line", "priority", "status",
+                                                                 "pending", "handling")}
+                                          for s in p.get("steps") or []]}
+                    except Exception as e:
+                        plan = {"error": str(e)}
+                return self._send_json({"title": title,
+                                        "matched": bool(out) or bool(plan and plan.get("matched")),
+                                        "would_execute": (plan or {}).get("target_line") or
+                                                          (out[0]["action_name"] if out else None),
+                                        "plan": plan, "hits": out})
             if path == "/api/match/replay":
                 days = int(body.get("days") or 7)
                 days = max(1, min(days, 30))
@@ -2013,10 +2139,10 @@ details summary:hover{color:var(--primary)}
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
     <div class="card">
-      <div class="card-header"><h3>动作规则<span class="q" data-tip="包含模式：逗号分隔关键词，全部包含才命中；正则模式：单个正则。&#10;命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
+      <div class="card-header"><h3>动作规则<span class="q" data-tip="每个动作 = 「切到某条目标线路」的一组命令（命令块为全量状态：先 undo 其它方向再添加本方向，与从哪条切过来无关）。&#10;同一站点请按「目标线路」各建一条动作；告警触发时系统按站点线路的 priority 升序降级，选第一条无活跃告警的线路作为目标并执行对应动作。&#10;匹配关键词仅用于「匹配预检」与站点未配置线路时的兼容匹配；命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:90px">状态</th><th style="width:220px">动作名 / 设备</th><th style="width:90px">匹配方式</th>
-        <th>关键词 / 正则</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
+        <th style="width:90px">状态</th><th style="width:220px">动作名 / 设备</th><th style="width:120px">目标线路</th>
+        <th>匹配关键词 / 正则（预检用）</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
       <tbody id="acttb"></tbody></table></div>
     </div>
   </div>
@@ -2098,11 +2224,11 @@ details summary:hover{color:var(--primary)}
     <div><label>匹配方式</label><select id="a_mtype"><option value="contains">包含关键词</option><option value="regex">正则表达式</option></select></div>
   </div>
   <div class="grid2">
-    <div><label>匹配线路（触发动作的故障线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路。选中后自动填充匹配关键词=该线路的告警关键字；互斥判定即用此关键字查询其它线路是否有活跃告警。">?</span></label><select id="a_line" onchange="onActionLineChange()"></select></div>
+    <div><label>匹配线路（触发动作的故障线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路，选中后自动填充匹配关键词=该线路告警关键字。&#10;多线路模式下，触发时由站点线路关键字识别故障线路、按线路 priority 降级选择目标线路；本字段主要用于「匹配预检」以及站点未配置线路时的兼容匹配。">?</span></label><select id="a_line" onchange="onActionLineChange()"></select></div>
     <div><label>目标线路（切换后要生效的线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路（不含已选的匹配线路）。选中后自动填充期望关键词=该线路的下一跳IP，切换完成后用验证命令检查路由是否指向它。">?</span></label><select id="a_tline" onchange="onActionTLineChange()"></select></div>
   </div>
   <input type="hidden" id="a_target">
-  <label>匹配关键词 / 正则（包含模式逗号分隔多个，全部包含才命中）*</label>
+  <label>匹配关键词 / 正则（预检用；站点未配线路时用于触发匹配）*</label>
   <input id="a_kw" placeholder="选择匹配线路后自动填充">
   <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" data-tip="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
   <textarea id="a_cmd" rows="10"></textarea>
@@ -2179,7 +2305,7 @@ details summary:hover{color:var(--primary)}
 
 <!-- 站点线路 -->
 <div class="modal" id="mLine"><div class="box" style="width:780px">
-  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" data-tip="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断是否多条线路同时告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护）。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
+  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" data-tip="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断该线路是否仍有活跃告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护）。&#10;优先级决定多线路降级的顺序：某条线路告警时，系统按优先级 1→2→3 依次检查其它线路，第一条无活跃告警的线路即切换目标；全部告警则不切换。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
   <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" data-tip="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">优先级</th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
@@ -2190,7 +2316,7 @@ details summary:hover{color:var(--primary)}
   </div>
   <div class="grid2">
     <div><label>告警关键词(逗号分隔)</label><input id="l_kw" placeholder="如 41.243.21.170,Airtel"></div>
-    <div><label>优先级(1最高)</label><input id="l_pri" type="number" value="1"></div>
+    <div><label>优先级（1 最高，降级按此顺序）</label><input id="l_pri" type="number" value="1"></div>
   </div>
   </div>
   <div class="mfoot">
@@ -2332,8 +2458,8 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
       <span class="device-host">${esc(x.site_name?x.site_name+" · ":"")}${esc(x.protocol||"")}://${esc(x.host||"")}</span></div></td>
-    <td><span class="tag ${x.match_type=="regex"?"":"info"}">${x.match_type=="regex"?"正则":"包含"}</span></td>
-    <td><span class="keyword-text">${esc(x.match_keywords)}</span></td>
+    <td>${x.target_line?`<span class="tag ok">${esc(x.target_line)}</span>`:'<span class="tag gray">未指定</span>'}</td>
+    <td><span class="tag ${x.match_type=="regex"?"":"info"}" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text">${esc(x.match_keywords)||'-'}</span></td>
     <td>${x.cooldown||"全局"}</td>
     <td><div class="ops-cell">
       <button class="btn btn-sm btn-primary" onclick="execAction(${x.id})">执行</button>
@@ -2522,11 +2648,28 @@ function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:
   api("POST","/api/config",b).then(()=>showToast("设置已保存"))}
 
 // ---- 匹配预检 / 回放 ----
+const _STEP_TXT={fault:"故障线路，排除",active:"有活跃告警，不可选",clear:"无活跃告警，可选",
+  no_action:"无活跃告警，但缺切换动作",no_keyword:"未配告警关键字",query_error:"查询失败",
+  legacy:"站点未配线路，走动作匹配"};
 function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
   api("POST","/api/match/test",{title:t}).then(r=>{
-    const o=$("mt_out");
-    if(!r.matched){o.innerHTML=`<div class="hit-bad">未命中任何动作</div>`;return}
-    o.innerHTML=r.hits.map(h=>`<div class="hit-ok">命中 <b>${esc(h.action_name)}</b>（站点 ${esc(h.site||"-")} / 设备 ${esc(h.device?h.device.name:"-")} / ${h.command_lines} 条命令）</div>`).join("")})}
+    const o=$("mt_out");const p=r.plan;
+    let h="";
+    if(p&&p.error){h+=`<div class="hit-bad">降级预演失败：${esc(p.error)}</div>`}
+    else if(p&&p.matched){
+      const st=s=>`<span class="tag ${s.status=="clear"?"ok":(s.status=="fault"?"gray":(s.status=="active"?"bad":"warn"))}">${esc(_STEP_TXT[s.status]||s.status)}</span>`;
+      h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">
+        <div style="font-weight:600;margin-bottom:8px">降级预演：站点 ${esc(p.site||"-")} · 故障线路 ${esc((p.fault_lines||[]).join("、")||"-")}</div>
+        ${(p.steps||[]).map(s=>`<div style="display:flex;gap:10px;align-items:center;padding:3px 0;font-size:13px">
+          <span style="width:150px">${esc(s.line)}${s.priority!=null?`（priority ${s.priority}）`:""}</span>
+          <span style="color:var(--text-muted);flex:1">${s.status=="active"||s.status=="clear"||s.status=="no_action"?`未处理 ${s.pending} / 处理中 ${s.handling}`:""}</span>
+          ${st(s)}</div>`).join("")}
+        <div style="margin-top:8px;font-size:13px">${p.allow
+          ? `<span class="tag ok">将执行切换</span> 目标线路 <b>${esc(p.target_line||"")}</b> → 动作「${esc(p.action_name||"")}」`
+          : `<span class="tag bad">不会切换</span> ${esc(p.reason||"")}`}</div>
+      </div>`}
+    if(r.hits&&r.hits.length){h+=r.hits.map(x=>`<div class="hit-ok">命中动作 <b>${esc(x.action_name)}</b>（站点 ${esc(x.site||"-")} / 设备 ${esc(x.device?x.device.name:"-")} / ${x.command_lines} 条命令）</div>`).join("")}
+    o.innerHTML=h||`<div class="hit-bad">未命中任何站点线路或动作</div>`})}
 function replayRun(){const d=+$("rp_days").value;
   $("rp_out").innerHTML='<div style="color:var(--text-muted);padding:6px 0">正在拉取 AIOps 告警并回放，请稍候…</div>';
   api("POST","/api/match/replay",{days:d}).then(r=>{
