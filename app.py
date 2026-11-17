@@ -849,7 +849,8 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
                 precheck_disp = parse_current_line(out, "", dev["current_regex"], with_ip=True, extra_map=emap)
                 login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
-                tl_append(conn, log_id, "当前生效线路：%s（见命令执行）" % (precheck_disp or "未识别"))
+                tl_append(conn, log_id, "当前生效线路：%s" % (precheck_disp or "未识别"),
+                          evidence="命令: %s\n\n%s" % (scmd, out), step=True)
             except Exception as e:
                 qok, qerr = 0, str(e)
                 login_note += "\n[切换前] 状态查询失败: %s" % e
@@ -895,11 +896,11 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                          "VALUES(?,?,?,?,?,?,?)",
                          (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
             conn.commit()
+            tl_append(conn, log_id, "执行命令：%s" % cmd, "ok" if ok else "bad",
+                      evidence=((out or "") + (("\n" + err) if err else "")) or "(无回显)", step=True)
             if not ok:
-                tl_append(conn, log_id, "命令失败（%d/%d）：%s，详见下方命令执行" % (i, len(cmds), cmd), "bad")
                 return (False, "第 %d 条命令失败: %s | %s" % (i, cmd, err),
                         login_note, precheck_line, False, "")
-        tl_append(conn, log_id, "切换命令下发完成（%d/%d）" % (len(cmds), len(cmds)), "ok")
         # 切换后验证：用独立会话重新登录执行（切换命令块的 quit 可能已断开会话）
         verify_ok = True
         verr = ""
@@ -938,10 +939,11 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                                  (log_id, seq, "[验证] " + vcmd, (vout or "")[:8000],
                                   (vsess.last_raw or "")[:20000], vok, now()))
                     conn.commit()
+                    tl_append(conn, log_id, "验证命令：%s" % vcmd, "ok" if vok else "bad",
+                              evidence=vout or "(无回显)", step=True)
                     if not vok:
                         verify_ok = False
                         verr = "验证命令执行失败: %s | %s" % (vcmd, vout[-150:])
-                        tl_append(conn, log_id, "验证命令失败：%s（见命令执行）" % vcmd, "bad")
                 if verify_ok and expect_kws:
                     vtext = "\n".join(vout_all)
                     missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
@@ -950,7 +952,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                         verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
                                 "（切换前线路: %s，可能路由未收敛或切换失败）"
                                 % (",".join(missing), precheck_disp or precheck_line or "未知"))
-                        tl_append(conn, log_id, "验证未通过：路由表未包含 %s，详见下方命令执行" % "、".join(missing), "bad")
+                        tl_append(conn, log_id, "验证未通过：路由表未包含 %s" % "、".join(missing), "bad")
                     else:
                         tl_append(conn, log_id, "验证通过：路由表指向目标线路（%s）"
                                   % "、".join(expect_kws), "ok")
@@ -1050,7 +1052,7 @@ def _worker():
                 pass
 
 
-def tl_append(conn, log_id, text, kind="info", evidence=""):
+def tl_append(conn, log_id, text, kind="info", evidence="", step=False):
     """向执行记录时间线追加一条带时间戳的关键步骤（全链路过程可视化）。
     evidence: 该步骤的原始证据（设备回显 / 接口数据片段），前端可展开查看。"""
     try:
@@ -1062,6 +1064,8 @@ def tl_append(conn, log_id, text, kind="info", evidence=""):
         item = {"ts": now(), "text": text, "kind": kind}
         if evidence:
             item["ev"] = str(evidence)[:4000]
+        if step:
+            item["step"] = 1
         tl.append(item)
         conn.execute("UPDATE exec_logs SET timeline=? WHERE id=?",
                      (json.dumps(tl, ensure_ascii=False), log_id))
@@ -1865,10 +1869,6 @@ pre.out .err{color:#fca5a5}
 .tl-item.bad .tl-text{color:var(--danger-d);font-weight:500}
 .tl-ts{font-size:11px;color:var(--text-faint);font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:2px}
 .tl-ev{margin-top:6px}
-.tl-ev-t{display:inline-block;font-size:11px;color:var(--text-muted);border:1px solid var(--border);border-radius:4px;padding:1px 8px;cursor:pointer;background:#f8fafc}
-.tl-ev-t:hover{color:var(--primary);border-color:var(--primary)}
-.tl-ev pre{display:none;margin-top:6px}
-.tl-ev.open pre{display:block}
 .timeline-title{font-size:14px;font-weight:600;margin-bottom:12px}
 details{margin:8px 0}
 details summary{cursor:pointer;color:var(--text-muted);font-size:12.5px;padding:4px 0;outline:none}
@@ -2269,11 +2269,11 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   if(tl.length)h+=`<div class="timeline-title">执行过程</div><div class="timeline">`+
     tl.map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
       <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div>
-      ${t.ev?`<div class="tl-ev"><span class="tl-ev-t" onclick="this.parentElement.classList.toggle('open')">证据</span><pre class="out">${esc(t.ev)}</pre></div>`:""}</div>`).join("")+`</div>`;
+      ${t.ev?`<div class="tl-ev"><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"证据"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></div>`:""}</div>`).join("")+`</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
   if(l.session_log)h+=term("会话原文",l.session_log,false);
-  if((l.steps||[]).length)h+=`<div class="timeline-title">命令执行<span class="q" data-tip="按执行顺序列出本次对设备下发的全部命令：&#10;[线路查询] 切换前查当前生效线路 → 切换命令块每条命令 → [验证] 验证命令。&#10;时间线中的结论均可在对应命令回显中核对。">?</span></div>`;
-  h+=(l.steps||[]).map(s=>`<div class="accordion${s.ok?"":" open"}">
+  if((l.steps||[]).length&&!tl.some(t=>t.step))h+=`<div class="timeline-title">命令执行<span class="q" data-tip="旧版记录的回退展示">?</span></div>`+
+    l.steps.map(s=>`<div class="accordion${s.ok?"":" open"}">
     <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
       <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="${s.ok?"tag-ok":"tag-fail"}">${s.ok?"OK":"FAIL"}</span><span class="command-text">${esc(s.command)}</span></span>${ARROW}</div>
     <div class="accordion-content"><div class="terminal-wrapper" style="padding-top:0;border-top:none">
