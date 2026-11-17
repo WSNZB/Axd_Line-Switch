@@ -1774,7 +1774,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .tag.gray{background:#f1f5f9;color:#64748b}
 .keyword-text{color:#334155;line-height:1.5;max-width:400px;display:inline-block;word-break:break-all}
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
-.err-text{color:var(--danger);font-size:12px;display:inline-block;line-height:1.5;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;cursor:default}
+.err-text{color:var(--danger);font-size:12px;line-height:1.6;word-break:break-word}
 
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
@@ -1953,9 +1953,11 @@ details summary:hover{color:var(--primary)}
     <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
       <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
-      <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:60px">ID</th><th style="width:150px">时间</th><th style="width:70px">触发</th><th style="width:260px">告警标题</th>
-        <th style="width:150px">动作</th><th style="width:130px">设备</th><th style="width:60px">模式</th><th style="width:100px">状态</th><th>错误</th></tr></thead>
+      <div class="table-responsive"><table class="data-table" style="table-layout:fixed">
+      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:220px"><col style="width:96px"><col style="width:84px"><col style="width:58px"><col style="width:88px"><col></colgroup>
+      <thead><tr>
+        <th>ID</th><th>时间</th><th>触发</th><th>告警标题</th>
+        <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
       <tbody id="logtb"></tbody></table></div>
     </div>
   </div>
@@ -2259,11 +2261,11 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td class="mono" style="color:var(--text-muted)">#${l.id}</td>
     <td class="mono" style="white-space:nowrap;color:var(--text-muted)">${esc(l.started_at)}</td>
     <td><span class="tag ${l.trigger=="api"?"info":"gray"}">${l.trigger=="api"?"API":"手动"}</span></td>
-    <td style="max-width:320px"><span class="keyword-text">${esc(l.alarm_title)||"-"}</span></td>
-    <td><b>${esc(l.action_name)}</b></td><td>${esc(l.device_name)}</td>
+    <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="keyword-text" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
+    <td style="overflow:hidden"><b>${esc(l.action_name)}</b></td><td style="overflow:hidden">${esc(l.device_name)}</td>
     <td>${l.dry_run?"演练":(l.rollback?"回切":"切换")}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
-    <td><span class="err-text" title="${esc(l.error)}">${esc(l.error)}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
+    <td style="overflow:hidden"><span class="err-text">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
