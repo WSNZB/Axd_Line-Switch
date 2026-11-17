@@ -249,8 +249,7 @@ def init_db():
                  ("global_cooldown", "300"),
                  ("continue_on_error", "0"),
                  ("aiops_url", AIOPS_API),
-                 ("aiops_token", AIOPS_TOKEN),
-                 ("active_window_min", "30")]:
+                 ("aiops_token", AIOPS_TOKEN)]:
         c.execute("INSERT OR IGNORE INTO kv(k,v) VALUES(?,?)", (k, v))
     conn.commit()
     conn.close()
@@ -304,41 +303,43 @@ def match_detail(conn, title):
 _AIOPS_TRACE = {}   # 最近一次活跃告警查询的请求/原始响应留痕（供执行证据展示）
 
 
-def fetch_aiops_alarms(conn, minutes=30, max_items=300):
-    """拉取近 N 分钟告警明细（含 is_recover 状态），用于站点线路互斥判定。
-    实际请求 URL 与首页原始响应记入 _AIOPS_TRACE，供时间线证据核对。"""
+def query_line_active(conn, gs_kw):
+    """以线路告警关键字作为 gs 直接查询该线路是否存在 未处理(status=0)/处理中(status=1)
+    且未忽略(is_ignore=0) 的告警；不附加时间过滤（状态即代表当前活跃）。
+    返回 {"pending": n1, "handling": n2, "titles": [样例标题...], "requests": [url...],
+          "raw": 首页原始响应}；查询失败抛异常。请求逐条记入 _AIOPS_TRACE。"""
     import urllib.parse
     import urllib.request
     token = (kv_get(conn, "aiops_token", "") or "").strip()
     api = (kv_get(conn, "aiops_url", "") or "").strip() or AIOPS_API
     if not token:
         raise RuntimeError("未配置 AIOps Token")
-    start = (datetime.now() - timedelta(minutes=int(minutes))).strftime("%Y-%m-%d %H:%M:%S")
-    end = (datetime.now() + timedelta(minutes=2)).strftime("%Y-%m-%d %H:%M:%S")
-    sul = json.dumps([{"attr": "create_time", "search": [start, end], "operator": "="}],
-                     ensure_ascii=False)
-    out, offset = [], 0
-    while offset < max_items:
-        params = {"offset": offset, "limit": min(200, max_items - offset), "search_unit_list": sul}
+    result = {"pending": 0, "handling": 0, "titles": [], "requests": [], "raw": "",
+              "gs_label": gs_kw}
+    for status_key, status in (("pending", 0), ("handling", 1)):
+        sul = json.dumps([{"attr": "is_ignore", "search": [0], "operator": "="},
+                          {"attr": "status", "search": [status], "operator": "="}],
+                         ensure_ascii=False)
+        params = {"gs": gs_kw, "offset": 0, "limit": 5, "search_unit_list": sul}
         full_url = api + "?" + urllib.parse.urlencode(params)
+        result["requests"].append(full_url)
         _AIOPS_TRACE.setdefault("requests", []).append(full_url)
         req = urllib.request.Request(full_url, headers={"token": token})
         with urllib.request.urlopen(req, timeout=20) as r:
             raw = r.read().decode("utf-8")
         d = json.loads(raw)
-        if offset == 0:
-            _AIOPS_TRACE["raw"] = raw[:6000]
         if d.get("code") != 0:
             raise RuntimeError("AIOps 接口返回错误: %s" % str(d)[:160])
-        items = (d.get("data") or {}).get("list") or []
-        out.extend(items)
-        total = (d.get("data") or {}).get("count")
-        _AIOPS_TRACE["count"] = total
-        _AIOPS_TRACE["window"] = (start, end)
-        if not items or (total is not None and len(out) >= total):
-            break
-        offset += 200
-    return out
+        data = d.get("data") or {}
+        result[status_key] = data.get("count") or 0
+        if not result["raw"]:
+            result["raw"] = raw[:3000]
+            _AIOPS_TRACE["raw"] = raw[:3000]
+        for it in (data.get("list") or [])[:3]:
+            t = it.get("alarm_title") or ""
+            if t and t not in result["titles"]:
+                result["titles"].append(t)
+    return result
 
 
 def _kw_match(keywords, text):
@@ -361,50 +362,43 @@ def judge_site_alarms(conn, title, action):
     site_id = action["site_id"]
     lines = conn.execute("SELECT * FROM lines WHERE site_id=? AND enabled=1 ORDER BY priority,id",
                          (site_id,)).fetchall()
-    detail = {"fault_lines": [], "active_lines": [], "window_min": 0, "note": ""}
+    detail = {"fault_lines": [], "active_lines": [], "note": "", "line_queries": {}}
     if not lines:
         detail["note"] = "站点未配置线路，未做互斥判定"
         return True, "", detail
-    window = int(kv_get(conn, "active_window_min", "30") or 30)
-    detail["window_min"] = window
     fault_lines = [ln["name"] for ln in lines if _kw_match(ln["alarm_keywords"], title)]
     detail["fault_lines"] = fault_lines
     if not fault_lines:
         detail["note"] = "告警标题未匹配到本站点任何线路关键词"
         return False, ("无法确认故障线路：告警标题未匹配站点下任何线路（%s）"
                        % "、".join(ln["name"] for ln in lines)), detail
+    # 对每条"其它线路"用其维护的告警关键字作为 gs，直接查询未处理/处理中告警
     _AIOPS_TRACE.clear()
     _AIOPS_TRACE["requests"] = []
+    active = {}
     try:
-        alarms = fetch_aiops_alarms(conn, window)
-        detail["aiops_trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
-                                 "count": _AIOPS_TRACE.get("count"),
-                                 "window": _AIOPS_TRACE.get("window"),
-                                 "raw": _AIOPS_TRACE.get("raw") or ""}
+        for ln in lines:
+            if ln["name"] in fault_lines:
+                continue
+            kw = (ln["alarm_keywords"] or "").strip()
+            if not kw:
+                continue
+            q = query_line_active(conn, kw)
+            n = q["pending"] + q["handling"]
+            detail["line_queries"][ln["name"]] = q
+            if n > 0:
+                active[ln["name"]] = q["titles"] or ["(%d 条)" % n]
     except Exception as e:
         detail["note"] = "AIOps 活跃告警查询失败，已放行: %s" % e
         detail["aiops_trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
                                  "error": str(e)}
         return True, "", detail
-    active = {}
-    for a in alarms:
-        if a.get("is_recover") == 1:
-            continue
-        t = a.get("alarm_title") or ""
-        for ln in lines:
-            if _kw_match(ln["alarm_keywords"], t):
-                active.setdefault(ln["name"], []).append(t)
-    detail["active_lines"] = list(active.keys())
-    detail["active_detail"] = {k: v[:3] for k, v in active.items()}
-    detail["alarms_total"] = len(alarms)
-    detail["checked_lines"] = {ln["name"]: len(active.get(ln["name"], [])) for ln in lines}
-    if len(active) >= 2:
-        return False, ("站点多条线路同时告警（%s），切换无效，不执行"
-                       % "、".join(active.keys())), detail
-    others = [n for n in active if n not in fault_lines]
-    if others:
-        return False, ("其它线路同时告警（%s），不执行切换" % "、".join(others)), detail
-    detail["note"] = "仅故障线路 %s 在告警，允许切换" % "、".join(fault_lines)
+    detail["aiops_trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or [])}
+    detail["active_lines"] = fault_lines + list(active.keys())
+    detail["active_detail"] = dict(active)
+    if active:
+        return False, ("其它线路同时告警（%s），不执行切换" % "、".join(active.keys())), detail
+    detail["note"] = "其它线路均无未处理/处理中告警，允许切换"
     return True, "", detail
 
 
@@ -1217,7 +1211,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json({"ok": True})
             if path == "/api/config":
                 keys = ["web_password", "api_token", "global_cooldown", "continue_on_error",
-                        "aiops_url", "aiops_token", "active_window_min"]
+                        "aiops_url", "aiops_token"]
                 cfg = {k: kv_get(conn, k) for k in keys}
                 cfg["web_password"] = mask_pw(cfg["web_password"])
                 cfg["aiops_token"] = mask_pw(cfg["aiops_token"])
@@ -1336,33 +1330,34 @@ class Handler(BaseHTTPRequestHandler):
                 if conn.execute("SELECT 1 FROM lines WHERE site_id=? AND enabled=1 LIMIT 1",
                                 (act["site_id"] or 0,)).fetchone():
                     init_tl.append({"ts": now(), "kind": "info",
-                                    "text": "互斥判定：查询站点近 %s 分钟活跃告警"
-                                    % (kv_get(conn, "active_window_min", "30") or 30)})
+                                    "text": "互斥判定：按其它线路告警关键字查询未处理/处理中告警"})
                 allow, reason, decision = judge_site_alarms(conn, title, act)
                 if decision.get("fault_lines"):
                     _ad = decision.get("active_detail") or {}
-                    _cl = decision.get("checked_lines") or {}
+                    _lq = decision.get("line_queries") or {}
                     _tr = decision.get("aiops_trace") or {}
-                    _w = _tr.get("window") or ["", ""]
-                    _lines_ev = ["实际请求（GET，header: token=已配置）："]
-                    for _u in (_tr.get("requests") or ["(未发起：mock 或缓存)"]):
-                        _lines_ev.append("  " + _u)
-                    _lines_ev.append("时间窗: %s ~ %s；接口返回 data.count=%s，实取 %s 条"
-                                     % (_w[0], _w[1], _tr.get("count"), decision.get("alarms_total")))
+                    _lines_ev = ["判定逻辑：其它线路用各自告警关键字作为 gs 查询"
+                                 "（is_ignore=0 且 status=未处理0/处理中1，不按时间过滤），count>0 即在告警。"]
+                    for _nm, _q in _lq.items():
+                        _lines_ev.append("线路 %s（gs=%s）：未处理 %s，处理中 %s%s"
+                                         % (_nm, (_q.get("gs_label") or ""),
+                                            _q.get("pending"), _q.get("handling"),
+                                            ("；样例: " + " | ".join(_q.get("titles") or [])) if _q.get("titles") else ""))
+                        for _u in (_q.get("requests") or []):
+                            _lines_ev.append("  实际请求: " + _u)
+                    if not _lq:
+                        _lines_ev.append("  (无其它线路需查询，或未发起：mock 环境)")
                     if _tr.get("error"):
                         _lines_ev.append("查询异常: %s" % _tr["error"])
-                    _lines_ev.append("逐线路关键词匹配结果：")
-                    for k, v in _cl.items():
-                        _lines_ev.append("  %s：%s 条活跃告警%s"
-                                         % (k, v, ("←" + " | ".join(_ad[k])) if _ad.get(k) else "（无）"))
                     if _tr.get("raw"):
-                        _lines_ev.append("AIOps 原始响应(首页, 截6000字)：")
-                        _lines_ev.append(_tr["raw"][:6000])
+                        _lines_ev.append("AIOps 原始响应(首次查询, 截3000字)：")
+                        _lines_ev.append(_tr["raw"][:3000])
                     _ev = "\n".join(_lines_ev)
+                    _others_act = [k for k in _ad]
                     init_tl.append({"ts": now(), "kind": "info",
-                                    "text": "故障线路：%s；活跃告警线路：%s"
+                                    "text": "故障线路：%s；其它线路在告警：%s"
                                     % ("、".join(decision["fault_lines"]),
-                                       "、".join(decision.get("active_lines") or []) or "无"),
+                                       "、".join(_others_act) or "无"),
                                     "ev": _ev})
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
                 base = {"matched": True, "title": title,
@@ -1372,7 +1367,6 @@ class Handler(BaseHTTPRequestHandler):
                         "decision": {"allow": allow, "reason": reason,
                                      "fault_lines": decision.get("fault_lines"),
                                      "active_lines": decision.get("active_lines"),
-                                     "window_min": decision.get("window_min"),
                                      "note": decision.get("note")}}
                 if not allow:
                     # 记录跳过原因，便于排障与统计
@@ -1380,7 +1374,7 @@ class Handler(BaseHTTPRequestHandler):
                     cur = conn.execute(
                         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
                         "alarm_title,dry_run,rollback,status,source_line,decision_note,started_at,finished_at,timeline) "
-                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,? ,?,?,?,?)",
+                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,?,?,?,?)",
                         (act["id"], act["name"], act["device_id"], dev["name"] if dev else "",
                          title, dry_run, ",".join(decision.get("fault_lines") or []),
                          (reason + " | " + decision.get("note", "")), now(), now(),
@@ -1453,7 +1447,7 @@ class Handler(BaseHTTPRequestHandler):
             m4 = re.match(r"^/api/config$", path)
             if m4:
                 for k in ("global_cooldown", "continue_on_error", "api_token", "aiops_url",
-                          "aiops_token", "active_window_min"):
+                          "aiops_token"):
                     if k in body and body[k] is not None and body[k] != "":
                         kv_set(conn, k, str(body[k]))
                 if body.get("web_password"):
@@ -2057,7 +2051,6 @@ details summary:hover{color:var(--primary)}
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
         <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改"></div></div>
-        <div class="kv"><label>活跃告警判定窗口(分钟)<span class="q" data-tip="收到告警时查询窗口内未恢复告警，判断其它线路是否同时告警">?</span></label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:220px"></div></div>
         <button class="btn btn-primary" onclick="saveCfg()">保存设置</button>
       </div>
     </div>
@@ -2479,9 +2472,9 @@ function delLine(id){if(!confirm("删除该线路？"))return;
 function loadCfg(){api("GET","/api/config").then(c=>{
   $("s_pwd").value="";$("s_token").value=c.api_token||"";$("s_cd").value=c.global_cooldown||0;
   $("s_aiops_url").value=c.aiops_url||"";$("s_aiops_tok").value="";
-  $("s_window").value=c.active_window_min||30})}
+})}
 function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:+$("s_cd").value||0,
-  aiops_url:$("s_aiops_url").value.trim(),active_window_min:+$("s_window").value||30};
+  aiops_url:$("s_aiops_url").value.trim()};
   if($("s_pwd").value)b.web_password=$("s_pwd").value;
   if($("s_aiops_tok").value)b.aiops_token=$("s_aiops_tok").value.trim();
   api("POST","/api/config",b).then(()=>showToast("设置已保存"))}

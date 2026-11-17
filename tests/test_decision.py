@@ -31,8 +31,13 @@ T_VODA = "【ICMP中断】41.243.21.170-华刚卢本-Vodacom"
 
 
 def fake_alarms(titles):
-    app.fetch_aiops_alarms = lambda conn, minutes=30, max_items=300: [
-        {"alarm_title": t, "is_recover": 0} for t in titles]
+    """titles: 当前 AIOps 中"在告警"的告警标题集合；
+    线路关键字(gs)命中任一标题 → 该线路有未处理告警。"""
+    def q(conn, gs_kw):
+        hit = [t for t in titles if all(w.lower() in t.lower() for w in gs_kw.split(",") if w.strip())]
+        return {"pending": len(hit), "handling": 0, "titles": hit[:3],
+                "requests": ["mock://?gs=" + gs_kw], "raw": "", "gs_label": gs_kw}
+    app.query_line_active = q
 
 
 def test_only_fault_line_active():
@@ -48,7 +53,7 @@ def test_multi_lines_active():
     fake_alarms([T_AIRTEL, T_VODA])
     allow, reason, d = app.judge_site_alarms(conn, T_AIRTEL, SITE1)
     assert not allow, "两条线路同时告警应拦截"
-    assert "多条线路同时告警" in reason, reason
+    assert "其它线路同时告警" in reason, reason
     print("PASS 场景2 Airtel+Vodacom 同时告警 → 拦截: %s" % reason)
 
 
@@ -77,7 +82,7 @@ def test_site_without_lines():
 def test_aiops_error():
     def boom(*a, **k):
         raise RuntimeError("未配置 AIOps Token")
-    app.fetch_aiops_alarms = boom
+    app.query_line_active = boom
     allow, reason, d = app.judge_site_alarms(conn, T_AIRTEL, SITE1)
     assert allow and "查询失败" in d["note"], d
     print("PASS 场景6 AIOps 查询失败 → 放行并记录原因（避免完全不动作）")
