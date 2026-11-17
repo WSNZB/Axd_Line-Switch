@@ -1922,6 +1922,13 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .tag.warn{background:var(--warn-bg);color:var(--warn-d)}
 .tag.info{background:var(--info-bg);color:var(--info-d)}
 .tag.gray{background:#f1f5f9;color:#64748b}
+.cov-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px dashed var(--border)}
+.cov-row:last-child{border-bottom:none}
+.cov-chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:6px;font-size:13px;border:1px solid transparent;white-space:nowrap}
+.cov-chip i{font-style:normal;font-size:11px;opacity:.7}
+.cov-chip.ok{background:var(--success-bg);color:var(--success-d);border-color:#a7f3d0}
+.cov-chip.bad{background:var(--danger-bg);color:var(--danger-d);border-color:#fecaca;cursor:pointer}
+.cov-chip.bad:hover{background:#fecaca}
 .keyword-text{color:#334155;line-height:1.5;max-width:400px;display:inline-block;word-break:break-all}
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
 .err-text{color:#b91c1c;font-size:12px;line-height:1.5}
@@ -2138,6 +2145,11 @@ details summary:hover{color:var(--primary)}
 
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
+    <div class="card" style="margin-bottom:16px">
+      <div class="card-header"><h3>线路切换覆盖<span class="q" data-tip="多线路站点：每条线路需配一条「切到该线路」的动作。&#10;告警触发时按线路 priority 升序降级，选第一条无活跃告警且已配动作的线路作为目标；未配动作的线路会被跳过。&#10;点红色线路名可直接补建动作；priority 可在「站点管理 → 线路」里用 ↑↓ 调整。">?</span></h3>
+        <button class="btn btn-secondary btn-sm" onclick="loadActions()">刷新</button></div>
+      <div class="card-body" id="cov_out"></div>
+    </div>
     <div class="card">
       <div class="card-header"><h3>动作规则<span class="q" data-tip="每个动作 = 「切到某条目标线路」的一组命令（命令块为全量状态：先 undo 其它方向再添加本方向，与从哪条切过来无关）。&#10;同一站点请按「目标线路」各建一条动作；告警触发时系统按站点线路的 priority 升序降级，选第一条无活跃告警的线路作为目标并执行对应动作。&#10;匹配关键词仅用于「匹配预检」与站点未配置线路时的兼容匹配；命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
@@ -2228,7 +2240,7 @@ details summary:hover{color:var(--primary)}
     <div><label>目标线路（切换后要生效的线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路（不含已选的匹配线路）。选中后自动填充期望关键词=该线路的下一跳IP，切换完成后用验证命令检查路由是否指向它。">?</span></label><select id="a_tline" onchange="onActionTLineChange()"></select></div>
   </div>
   <input type="hidden" id="a_target">
-  <label>匹配关键词 / 正则（预检用；站点未配线路时用于触发匹配）*</label>
+  <label>匹配关键词 / 正则（可选：仅匹配预检使用；站点未维护线路时用于触发匹配，此时必填）</label>
   <input id="a_kw" placeholder="选择匹配线路后自动填充">
   <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" data-tip="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
   <textarea id="a_cmd" rows="10"></textarea>
@@ -2452,6 +2464,28 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogBody").innerHTML=h;$("mLog").classList.add("show")})}
 
 // ---- 动作 ----
+function renderCoverage(){const o=$("cov_out");if(!o)return;
+  if(!DATA.sites.length){o.innerHTML='<div class="empty">暂无站点</div>';return}
+  o.innerHTML=DATA.sites.map(s=>{
+    const ls=DATA.lines.filter(l=>l.site_id==s.id).sort((a,b)=>a.priority-b.priority||a.id-b.id);
+    if(!ls.length)return `<div class="cov-row"><b style="min-width:120px">${esc(s.name)}</b>
+      <span style="color:var(--text-faint);font-size:12px">未维护线路：该站点走动作关键词兼容匹配（无降级）</span></div>`;
+    const acts=DATA.actions.filter(a=>a.site_id==s.id&&a.enabled);
+    const hit=l=>acts.find(x=>(x.target_line||"").trim()===l.name);
+    const chips=ls.map(l=>{const a=hit(l);
+      return a?`<span class="cov-chip ok" title="已配动作：${esc(a.name)}">${esc(l.name)}<i>P${l.priority}</i></span>`
+              :`<span class="cov-chip bad" title="缺少「切到${esc(l.name)}」的动作，点此补建" onclick="newActionFor(${s.id},${l.id})">${esc(l.name)}<i>P${l.priority}</i></span>`}).join("");
+    const done=ls.filter(l=>hit(l)).length;
+    return `<div class="cov-row"><b style="min-width:120px">${esc(s.name)}</b>
+      <div style="flex:1;display:flex;flex-wrap:wrap;gap:8px;align-items:center">${chips}</div>
+      <span style="font-size:12px;color:${done===ls.length?"var(--success-d)":"var(--warn-d)"}">覆盖 ${done}/${ls.length}</span></div>`}).join("")}
+function newActionFor(siteId,lineId){
+  editAction(0);
+  $("a_site").value=siteId;refreshActionLines();$("a_line").value="";
+  const l=DATA.lines.find(x=>x.id==lineId);if(!l)return;
+  $("a_tline").value=lineId;onActionTLineChange();
+  $("a_name").value="切到"+l.name;
+  $("mActTitle").textContent="新建动作（站点线路："+l.name+"）"}
 function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/sites"),api("GET","/api/devices"),api("GET","/api/lines")]).then(([a,s,d,lines])=>{
   DATA.actions=a;DATA.sites=s;DATA.devices=d;DATA.lines=lines;
   $("acttb").innerHTML=a.length?a.map(x=>`<tr>
@@ -2467,7 +2501,8 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
       <button class="btn btn-sm btn-secondary" onclick="editAction(${x.id})">编辑</button>
       <button class="btn btn-sm btn-secondary" onclick="copyAction(${x.id})">复制</button>
       <button class="btn btn-sm btn-danger" onclick="delAction(${x.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无动作</div></td></tr>'})}
+    '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无动作</div></td></tr>';
+  renderCoverage()})}
 function fillSelect(sel,list,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
   list.map(x=>`<option value="${x.id}">${esc(labelFirst?x.name:x.name+(x.host?" ("+x.host+")":""))}</option>`).join("")}
 function lineOptions(ls,excludeId){return ls.filter(l=>l.id!=excludeId)
@@ -2525,7 +2560,10 @@ function saveAction(){const b={id:$("a_id").value||null,name:$("a_name").value.t
   verify_block:$("a_verify").value,expect_keywords:$("a_expect").value.trim(),
   target_line:$("a_target").value.trim(),
   cooldown:+$("a_cd").value||0,enabled:$("a_en").checked?1:0};
-  if(!b.name||!b.device_id||!b.match_keywords){showToast("动作名、设备、匹配关键词必填",1);return}
+  const siteHasLines=b.site_id&&DATA.lines.some(l=>l.site_id==b.site_id);
+  if(!b.name||!b.device_id){showToast("动作名、目标设备必填",1);return}
+  if(!b.target_line){showToast("请选择目标线路（切换后要生效的线路）",1);return}
+  if(!siteHasLines&&!b.match_keywords){showToast("站点未维护线路时，匹配关键词必填",1);return}
   api(b.id?"PUT":"POST",b.id?"/api/actions/"+b.id:"/api/actions",b).then(()=>{
     closeM("mAct");showToast("动作已保存");loadActions()})}
 function copyAction(id){const a=DATA.actions.find(x=>x.id==id);if(!a)return;
@@ -2621,13 +2659,28 @@ function manageLines(siteId,siteName){$("l_site").value=siteId;
   $("l_name").value="";$("l_kw").value="";$("l_ip").value="";$("l_pri").value=1;
   loadLines(siteId);$("mLine").classList.add("show")}
 function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
-  $("ltb").innerHTML=ls.length?ls.map(l=>`<tr>
+  DATA.lines=DATA.lines.filter(l=>l.site_id!=siteId).concat(ls);
+  const ordered=ls.slice().sort((a,b)=>a.priority-b.priority||a.id-b.id);
+  $("ltb").innerHTML=ls.length?ordered.map((l,i)=>`<tr>
     <td><b>${esc(l.name)}</b></td><td><span class="keyword-text mono" style="color:var(--text-muted)">${esc(l.alarm_keywords)||'(空)'}</span></td>
     <td class="mono" style="color:var(--text-muted)">${esc(l.nexthop_ip)||'-'}</td>
-    <td>${l.priority}</td>
+    <td><div style="display:flex;align-items:center;gap:4px">
+      <b>${l.priority}</b>
+      <button class="btn btn-sm btn-secondary" style="padding:2px 6px" ${i===0?"disabled":""} onclick="moveLine(${l.id},-1)" title="提前（降级时更优先）">↑</button>
+      <button class="btn btn-sm btn-secondary" style="padding:2px 6px" ${i===ordered.length-1?"disabled":""} onclick="moveLine(${l.id},1)" title="后移（降级时更靠后）">↓</button>
+    </div></td>
     <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`).join(""):
     '<tr><td colspan=6><div class="empty">暂无线路</div></td></tr>'})}
+function moveLine(id,dir){
+  const sid=+$("l_site").value;
+  const ls=DATA.lines.filter(l=>l.site_id==sid).sort((a,b)=>a.priority-b.priority||a.id-b.id);
+  const i=ls.findIndex(x=>x.id==id),j=i+dir;
+  if(i<0||j<0||j>=ls.length)return;
+  const a=ls[i],b=ls[j];
+  Promise.all([api("PUT","/api/lines/"+a.id,{priority:j+1}),
+               api("PUT","/api/lines/"+b.id,{priority:i+1})])
+    .then(()=>{loadLines(sid);loadSites();showToast("优先级已调整")})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
   alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim(),priority:+$("l_pri").value||1};
   if(!b.name)return showToast("线路名必填",1);
