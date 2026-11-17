@@ -1664,32 +1664,38 @@ PAGE_HTML = r"""
   --purple:#8b5cf6; --purple-bg:#ede9fe;
 }
 *{box-sizing:border-box;margin:0;padding:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",Roboto,Helvetica,Arial,sans-serif}
-body{display:flex;height:100vh;background:var(--bg-body);color:var(--text-main);font-size:14px;overflow:hidden}
+body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);color:var(--text-main);font-size:14px;overflow:hidden}
 ::-webkit-scrollbar{width:8px;height:8px}
 ::-webkit-scrollbar-track{background:transparent}
 ::-webkit-scrollbar-thumb{background:#cbd5e1;border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:#94a3b8}
 
-/* ============ 侧边栏 ============ */
-.sidebar{width:220px;background:var(--sidebar-bg);display:flex;flex-direction:column;flex-shrink:0;z-index:10}
-.sidebar-header{padding:24px 20px;display:flex;align-items:center;gap:12px}
-.logo-icon{width:32px;height:32px;background:var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:18px;flex-shrink:0}
-.logo-text h1{color:#fff;font-size:15px;font-weight:600;letter-spacing:.5px}
-.logo-text p{color:var(--sidebar-text);font-size:11px;margin-top:2px}
-.nav-group{padding:16px 12px 0}
-.nav-title{color:#64748b;font-size:11px;font-weight:600;margin-bottom:8px;padding-left:8px}
-.nav-item{display:flex;align-items:center;padding:10px 12px;color:var(--sidebar-text);font-size:13px;border-radius:6px;margin-bottom:4px;transition:all .2s;cursor:pointer;border:none;background:none;width:100%;text-align:left}
-.nav-item svg{margin-right:10px;width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
-.nav-item:hover{color:#fff;background:rgba(255,255,255,.05)}
-.nav-item.active{color:var(--sidebar-active-text);background:var(--sidebar-active-bg);font-weight:500}
-.sidebar-footer{margin-top:auto;padding:20px;border-top:1px solid rgba(255,255,255,.05)}
-.sidebar-footer p{font-size:11px;color:#64748b;margin-bottom:12px;line-height:1.6;word-break:break-all}
-.btn-logout{display:flex;align-items:center;justify-content:center;gap:6px;width:100%;padding:8px;background:transparent;color:var(--sidebar-text);border:1px solid rgba(255,255,255,.1);border-radius:6px;font-size:12px;cursor:pointer;transition:all .2s}
-.btn-logout:hover{background:rgba(239,68,68,.1);color:var(--danger);border-color:rgba(239,68,68,.2)}
+/* ============ 顶部一级菜单 ============ */
+.headerbar{height:60px;background:var(--sidebar-bg);display:flex;align-items:center;padding:0 24px;gap:8px;flex-shrink:0;z-index:30;box-shadow:0 1px 4px rgba(15,23,42,.25)}
+.logo-icon{width:30px;height:30px;background:var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:16px;flex-shrink:0}
+.brand{color:#fff;font-size:15px;font-weight:600;letter-spacing:.5px;margin-right:28px;white-space:nowrap}
+.top-nav{display:flex;gap:4px}
+.top-nav button{border:none;background:none;color:var(--sidebar-text);font-size:14px;padding:9px 20px;border-radius:6px;cursor:pointer;transition:all .2s;position:relative}
+.top-nav button:hover{color:#fff;background:rgba(255,255,255,.06)}
+.top-nav button.active{color:#fff;font-weight:600;background:var(--sidebar-active-bg)}
+.header-actions{margin-left:auto;display:flex;align-items:center;gap:14px}
+.ver-top{font-size:11px;color:#64748b;white-space:nowrap}
+.btn-logout{display:flex;align-items:center;gap:6px;padding:7px 14px;background:transparent;color:var(--sidebar-text);border:1px solid rgba(255,255,255,.12);border-radius:6px;font-size:12px;cursor:pointer;transition:all .2s;white-space:nowrap}
+.btn-logout:hover{background:rgba(239,68,68,.12);color:var(--danger);border-color:rgba(239,68,68,.25)}
+
+/* ============ 左侧二级菜单 ============ */
+.app-row{flex:1;display:flex;min-height:0;overflow:hidden}
+.sidebar{width:196px;background:var(--bg-card);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
+.side-nav{padding:16px 12px}
+.side-title{color:var(--text-faint);font-size:11px;font-weight:600;margin-bottom:10px;padding-left:10px;letter-spacing:1px}
+.nav-item{display:flex;align-items:center;padding:9px 12px;color:#475569;font-size:13px;border-radius:6px;margin-bottom:4px;transition:all .2s;cursor:pointer;border:none;background:none;width:100%;text-align:left}
+.nav-item svg{margin-right:10px;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
+.nav-item:hover{color:var(--text-main);background:#f1f5f9}
+.nav-item.active{color:var(--primary);background:var(--primary-bg);font-weight:600}
 
 /* ============ 主区 ============ */
 .main-container{flex:1;display:flex;flex-direction:column;min-width:0}
-.topbar{height:64px;background:var(--bg-card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 32px;flex-shrink:0}
+.topbar{height:56px;background:var(--bg-card);border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;padding:0 28px;flex-shrink:0}
 .page-title h2{font-size:18px;font-weight:600}
 .page-title p{color:var(--text-muted);font-size:12px;margin-top:2px}
 .topbar-actions{display:flex;align-items:center;gap:16px}
@@ -1885,10 +1891,11 @@ details summary:hover{color:var(--primary)}
 .toast .ti{font-weight:bold}
 
 @media (max-width:1000px){
-  .sidebar{width:60px;flex-basis:60px}
-  .sidebar-header{justify-content:center;padding:20px 0}
-  .logo-text,.nav-title,.nav-item span,.sidebar-footer p{display:none}
-  .nav-item{justify-content:center;padding:12px}
+  .brand{margin-right:12px}
+  .top-nav button{padding:8px 12px;font-size:13px}
+  .sidebar{width:56px;flex-basis:56px}
+  .side-title,.nav-item span{display:none}
+  .nav-item{justify-content:center;padding:11px}
   .nav-item svg{margin-right:0}
   .stat-grid,.grid2,.grid3,.kv{grid-template-columns:1fr}
   .kv label{text-align:left}
@@ -1902,24 +1909,26 @@ details summary:hover{color:var(--primary)}
 <div id="toast-container"></div>
 <div class="qtip" id="qtip"><div class="qarrow" id="qarrow"></div><span id="qtipText"></span></div>
 
-<!-- 侧边栏 -->
+<!-- 顶部一级菜单 -->
+<header class="headerbar">
+  <div class="logo-icon">A</div>
+  <div class="brand">线路切换平台</div>
+  <nav class="top-nav" id="topNav">
+    <button class="active" data-g="monitor">监控</button>
+    <button data-g="config">切换配置</button>
+    <button data-g="resource">资源管理</button>
+    <button data-g="system">系统</button>
+  </nav>
+  <div class="header-actions">
+    <span class="ver-top" id="ver"></span>
+    <button class="btn-logout" onclick="logout()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>退出</button>
+  </div>
+</header>
+
+<div class="app-row">
+<!-- 左侧二级菜单 -->
 <aside class="sidebar">
-  <div class="sidebar-header">
-    <div class="logo-icon">A</div>
-    <div class="logo-text"><h1>线路切换平台</h1></div>
-  </div>
-  <div class="nav-group"><div class="nav-title">监控</div>
-    <button class="nav-item active" data-p="dash"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg><span>执行记录</span></button></div>
-  <div class="nav-group"><div class="nav-title">配置</div>
-    <button class="nav-item" data-p="actions"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg><span>切换动作</span></button>
-    <button class="nav-item" data-p="devices"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/></svg><span>设备管理</span></button>
-    <button class="nav-item" data-p="sites"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg><span>站点管理</span></button></div>
-  <div class="nav-group"><div class="nav-title">系统</div>
-    <button class="nav-item" data-p="settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg><span>全局设置</span></button></div>
-  <div class="sidebar-footer">
-    <p id="ver"></p>
-    <button class="btn-logout" onclick="logout()">退出登录</button>
-  </div>
+  <div class="side-nav" id="sideNav"></div>
 </aside>
 
 <!-- 主内容 -->
@@ -2022,6 +2031,7 @@ details summary:hover{color:var(--primary)}
 
   </div>
 </main>
+</div><!-- /app-row -->
 
 <!-- 登录 -->
 <div class="login" id="loginBox">
@@ -2181,22 +2191,42 @@ function doLogin(){api("POST","/api/login",{password:$("lg_pwd").value}).then(()
   $("loginBox").classList.remove("show");$("lg_err").textContent="";boot()}).catch(()=>{$("lg_err").textContent="密码错误"})}
 function logout(){api("POST","/api/logout").then(()=>location.reload())}
 
-// ---- 导航 ----
+// ---- 导航：顶部一级 + 左侧二级 ----
 const PAGE_INFO={dash:["执行记录","切换任务执行历史与结果"],actions:["切换动作","配置告警匹配规则与执行命令"],
   devices:["设备管理","站点设备连接与线路映射"],sites:["站点管理","站点与线路配置"],settings:["全局设置","接口、令牌与回调参数"]};
-document.querySelectorAll(".nav-item").forEach(b=>b.onclick=()=>{
-  document.querySelectorAll(".nav-item").forEach(x=>x.classList.remove("active"));b.classList.add("active");
-  document.querySelectorAll(".page-view").forEach(p=>p.classList.remove("active"));
-  $("p-"+b.dataset.p).classList.add("active");
-  $("pageTitle").textContent=PAGE_INFO[b.dataset.p][0];
-  refresh(b.dataset.p)});
+const NAV_GROUPS={
+  monitor:{title:"监 控",items:[["dash","执行记录",'<path d="M3 12h4l3-8 5 16 3-8h4"/>']]},
+  config:{title:"切换配置",items:[["actions","切换动作",'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>']]},
+  resource:{title:"资源管理",items:[["devices","设备管理",'<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/>'],["sites","站点管理",'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>']]},
+  system:{title:"系 统",items:[["settings","全局设置",'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>']]}};
+let CUR_PAGE="dash";
+function buildSideNav(g){
+  const grp=NAV_GROUPS[g];
+  $("sideNav").innerHTML='<div class="side-title">'+grp.title+'</div>'+
+    grp.items.map(it=>`<button class="nav-item${it[0]==CUR_PAGE?" active":""}" data-p="${it[0]}"><svg viewBox="0 0 24 24">${it[2]}</svg><span>${it[1]}</span></button>`).join("");
+  document.querySelectorAll("#sideNav .nav-item").forEach(b=>b.onclick=()=>openPage(b.dataset.p));
+}
+function openPage(p){
+  CUR_PAGE=p;
+  document.querySelectorAll(".nav-item").forEach(x=>x.classList.toggle("active",x.dataset.p==p));
+  document.querySelectorAll(".page-view").forEach(v=>v.classList.remove("active"));
+  $("p-"+p).classList.add("active");
+  $("pageTitle").textContent=PAGE_INFO[p][0];
+  refresh(p)}
+document.querySelectorAll("#topNav button").forEach(b=>b.onclick=()=>{
+  document.querySelectorAll("#topNav button").forEach(x=>x.classList.remove("active"));b.classList.add("active");
+  buildSideNav(b.dataset.g);
+  const grp=NAV_GROUPS[b.dataset.g];
+  const first=grp.items.some(it=>it[0]==CUR_PAGE)?CUR_PAGE:grp.items[0][0];
+  openPage(first)});
+function gotoGroup(g,p){const tb=document.querySelector('#topNav button[data-g="'+g+'"]');if(tb)tb.click();if(p)openPage(p)}
 function refresh(p){
   if(p=="dash"){loadStats();loadLogs()}
   if(p=="actions")loadActions();
   if(p=="devices")loadDevices();
   if(p=="sites")loadSites();
   if(p=="settings")loadCfg()}
-function refreshNow(){const b=document.querySelector(".nav-item.active");refresh(b?b.dataset.p:"dash")}
+function refreshNow(){refresh(CUR_PAGE)}
 
 // ---- 仪表盘 ----
 const STAT=[
@@ -2437,9 +2467,10 @@ function testAlert(){const t=$("t_title").value.trim();if(!t)return showToast("�
     o.textContent=JSON.stringify(r,null,2);loadLogs()})}
 
 // ---- 启动 ----
-function boot(){refresh("dash");setInterval(()=>{loadStats();loadLogs()},30000);
+const PAGE_GROUP={dash:"monitor",actions:"config",devices:"resource",sites:"resource",settings:"system"};
+function boot(){buildSideNav("monitor");refresh("dash");setInterval(()=>{loadStats();loadLogs()},30000);
   const h=(location.hash||"").slice(1);
-  if(PAGE_INFO[h]){const b=document.querySelector('.nav-item[data-p="'+h+'"]');if(b)b.click()}}
+  if(PAGE_INFO[h])gotoGroup(PAGE_GROUP[h],h)}
 api("GET","/api/session").then(()=>{boot()}).catch(()=>{$("loginBox").classList.add("show")});
 document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if(e.target===m)m.classList.remove("show")}));
 // ---- 问号气泡：全局单例，自动避让视口边缘 ----
