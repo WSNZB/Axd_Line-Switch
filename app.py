@@ -1954,7 +1954,7 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
       <div class="table-responsive"><table class="data-table" style="table-layout:fixed">
-      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:220px"><col style="width:96px"><col style="width:84px"><col style="width:58px"><col style="width:88px"><col></colgroup>
+      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:220px"><col style="width:96px"><col style="width:84px"><col style="width:64px"><col style="width:88px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
