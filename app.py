@@ -783,17 +783,18 @@ def parse_current_line(output, line_map_text, custom_regex="", with_ip=False, ex
 def site_line_ip_map(conn, site_id):
     """线路映射的唯一维护处 = 站点线路：
     ① 线路的「下一跳IP」字段（精确，优先）；
-    ② 告警关键词中出现的 IP（兼容旧填法，回退）。"""
+    ② 告警关键词中出现的 IP（兼容旧填法，回退）。
+    设备未关联站点时，扫描全部站点线路做兜底解析。"""
     m = {}
-    if not site_id:
-        return m
-    for ln in conn.execute("SELECT name,alarm_keywords,nexthop_ip FROM lines WHERE site_id=? AND enabled=1",
-                           (site_id,)).fetchall():
+    sql = ("SELECT name,alarm_keywords,nexthop_ip FROM lines WHERE enabled=1"
+           + (" AND site_id=?" if site_id else "")
+           + " ORDER BY " + ("priority,id" if site_id else "site_id,priority,id"))
+    rows = conn.execute(sql, (site_id,) if site_id else ()).fetchall()
+    for ln in rows:
         ip = (ln["nexthop_ip"] or "").strip()
         if ip:
-            m[ip] = ln["name"]
-    for ln in conn.execute("SELECT name,alarm_keywords FROM lines WHERE site_id=? AND enabled=1",
-                           (site_id,)).fetchall():
+            m.setdefault(ip, ln["name"])
+    for ln in rows:
         for w in (ln["alarm_keywords"] or "").split(","):
             w = w.strip()
             if re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", w):
@@ -1531,8 +1532,8 @@ class Handler(BaseHTTPRequestHandler):
                     s.close()
                     note = s.log_lines
                     if line and line_disp == line and re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", line):
-                        note = note + ["提示: 下一跳 %s 未匹配到线路名——请在该站点的「站点线路」中，"
-                                       "把对应线路的「下一跳IP」填为 %s" % (line, line)]
+                        note = note + ["提示: 下一跳 %s 未匹配到线路名——请在「站点管理→线路」里把某条线路的"
+                                       "「下一跳IP」填为 %s（或告警关键词含该 IP），并建议给设备关联所属站点" % (line, line)]
                     return {"ok": True, "current_line": line_disp or "未识别",
                             "command": scmd, "note": note, "banner": out[:800]}
                 ver = ""
@@ -1789,9 +1790,9 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .action-buttons select{padding:9px 12px;border:1px solid var(--border2);border-radius:6px;font-size:13px;outline:none;background:#fff;width:auto}
 .q{position:relative;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #b6c2d4;color:#64748b;font-size:10px;font-weight:700;cursor:help;margin-left:7px;vertical-align:middle;flex-shrink:0;line-height:1}
 .q:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-bg)}
-.q::after{content:attr(data-tip);position:absolute;left:50%;transform:translateX(-50%);top:calc(100% + 7px);background:#0f172a;color:#e2e8f0;font-size:12px;font-weight:400;line-height:1.65;padding:8px 12px;border-radius:6px;white-space:pre-line;width:max-content;max-width:340px;box-shadow:0 6px 20px rgba(15,23,42,.28);opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none;z-index:400}
-.q::before{content:"";position:absolute;left:50%;transform:translateX(-50%);top:calc(100% - 3px);border:5px solid transparent;border-bottom-color:#0f172a;opacity:0;visibility:hidden;transition:opacity .12s;z-index:401}
-.q:hover::after,.q:hover::before{opacity:1;visibility:visible}
+.qtip{position:fixed;background:#0f172a;color:#e2e8f0;font-size:12px;font-weight:400;line-height:1.65;padding:8px 12px;border-radius:6px;white-space:pre-line;width:max-content;max-width:320px;box-shadow:0 6px 20px rgba(15,23,42,.28);pointer-events:none;z-index:500;display:none}
+.qtip.show{display:block}
+.qtip .qarrow{position:absolute;width:10px;height:10px;background:#0f172a;transform:rotate(45deg)}
 
 /* ============ 弹窗 ============ */
 .modal{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:flex-start;justify-content:center;z-index:100;overflow:auto;padding:48px 16px}
@@ -1899,6 +1900,7 @@ details summary:hover{color:var(--primary)}
 <body>
 
 <div id="toast-container"></div>
+<div class="qtip" id="qtip"><div class="qarrow" id="qarrow"></div><span id="qtipText"></span></div>
 
 <!-- 侧边栏 -->
 <aside class="sidebar">
@@ -2438,6 +2440,25 @@ function boot(){refresh("dash");setInterval(()=>{loadStats();loadLogs()},30000);
   if(PAGE_INFO[h]){const b=document.querySelector('.nav-item[data-p="'+h+'"]');if(b)b.click()}}
 api("GET","/api/session").then(()=>{boot()}).catch(()=>{$("loginBox").classList.add("show")});
 document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if(e.target===m)m.classList.remove("show")}));
+// ---- 问号气泡：全局单例，自动避让视口边缘 ----
+(function(){
+  const tip=$("qtip"), arrow=$("qarrow"), txt=$("qtipText");
+  function place(el){
+    txt.textContent=el.dataset.tip||"";
+    tip.classList.add("show");
+    const r=el.getBoundingClientRect(), tw=tip.offsetWidth, th=tip.offsetHeight, M=8;
+    let left=r.left+r.width/2-tw/2, top=r.bottom+7, side="bottom";
+    if(left<M)left=M; if(left+tw>window.innerWidth-M)left=window.innerWidth-M-tw;
+    if(top+th>window.innerHeight-M){top=r.top-th-7;side="top";}
+    tip.style.left=left+"px"; tip.style.top=top+"px";
+    const ax=r.left+r.width/2-left-5;
+    arrow.style.left=Math.max(10,Math.min(ax,tw-20))+"px";
+    if(side==="top"){arrow.style.top="-5px"}else{arrow.style.top="auto";arrow.style.bottom="-5px"}
+  }
+  document.addEventListener("mouseover",e=>{const q=e.target.closest(".q");if(q&&q.dataset.tip)place(q)});
+  document.addEventListener("mouseout",e=>{if(e.target.closest(".q"))tip.classList.remove("show")});
+  window.addEventListener("scroll",()=>tip.classList.remove("show"),true);
+})();
 </script>
 </body>
 </html>
