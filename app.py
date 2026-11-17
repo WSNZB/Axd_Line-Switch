@@ -276,12 +276,14 @@ def kv_set(conn, key, value):
 
 # --------------------------------------------------------------- 匹配 ----
 def match_actions(conn, title):
-    """返回 (命中的动作列表)。contains: 逗号分隔关键词全部包含(不区分大小写)；regex: re.search。"""
-    return [m["action"] for m in match_detail(conn, title)]
+    """返回 (命中的动作列表)。contains: 逗号分隔关键词全部包含(不区分大小写)；regex: re.search。
+    正则语法错误的规则不算命中（见 match_detail 的 error 标记）。"""
+    return [m["action"] for m in match_detail(conn, title) if not m.get("error")]
 
 
 def match_detail(conn, title):
-    """返回命中明细 [{'action': Row, 'reason': '...'}]，reason 说明哪几个关键词命中。"""
+    """返回命中明细 [{'action': Row, 'reason': '...', 'error': bool}]。
+    error=True 表示规则本身配置有误（正则语法错误），不参与触发，仅供预检页展示。"""
     t = (title or "").strip()
     if not t:
         return []
@@ -290,27 +292,25 @@ def match_detail(conn, title):
         kw = (a["match_keywords"] or "").strip()
         if not kw:
             continue
-        try:
-            if a["match_type"] == "regex":
+        if a["match_type"] == "regex":
+            try:
                 if re.search(kw, t, re.IGNORECASE):
                     hits.append({"action": a, "reason": "正则匹配: %s" % kw})
-            else:
-                words = [w.strip() for w in kw.split(",") if w.strip()]
-                if words and all(w.lower() in t.lower() for w in words):
-                    hits.append({"action": a, "reason": "关键词全部命中: %s" % ",".join(words)})
-        except re.error as e:
-            hits.append({"action": a, "reason": "正则语法错误: %s" % e})
+            except re.error as e:
+                hits.append({"action": a, "reason": "正则语法错误: %s（该规则不会触发任何切换，请修正）" % e,
+                             "error": True})
+        else:
+            words = [w.strip() for w in kw.split(",") if w.strip()]
+            if words and all(w.lower() in t.lower() for w in words):
+                hits.append({"action": a, "reason": "关键词全部命中: %s" % ",".join(words)})
     return hits
-
-
-_AIOPS_TRACE = {}   # 最近一次活跃告警查询的请求/原始响应留痕（供执行证据展示）
 
 
 def query_line_active(conn, gs_kw):
     """以线路告警关键字作为 gs 直接查询该线路是否存在 未处理(status=0)/处理中(status=1)
     且未忽略(is_ignore=0) 的告警；不附加时间过滤（状态即代表当前活跃）。
     返回 {"pending": n1, "handling": n2, "titles": [样例标题...], "requests": [url...],
-          "raw": 首页原始响应}；查询失败抛异常。请求逐条记入 _AIOPS_TRACE。"""
+          "raw": 首页原始响应}；查询失败抛异常。"""
     import urllib.parse
     import urllib.request
     token = (kv_get(conn, "aiops_token", "") or "").strip()
@@ -326,7 +326,6 @@ def query_line_active(conn, gs_kw):
         params = {"gs": gs_kw, "offset": 0, "limit": 5, "search_unit_list": sul}
         full_url = api + "?" + urllib.parse.urlencode(params)
         result["requests"].append(full_url)
-        _AIOPS_TRACE.setdefault("requests", []).append(full_url)
         req = urllib.request.Request(full_url, headers={"token": token})
         with urllib.request.urlopen(req, timeout=20) as r:
             raw = r.read().decode("utf-8")
@@ -337,7 +336,6 @@ def query_line_active(conn, gs_kw):
         result[status_key] = data.get("count") or 0
         if not result["raw"]:
             result["raw"] = raw[:3000]
-            _AIOPS_TRACE["raw"] = raw[:3000]
         for it in (data.get("list") or [])[:3]:
             t = it.get("alarm_title") or ""
             if t and t not in result["titles"]:
@@ -406,6 +404,8 @@ def matched_actions(conn, title):
     """启用中、关键词命中标题的动作（含阶梯目标信息）。"""
     out = []
     for h in match_detail(conn, title):
+        if h.get("error"):
+            continue
         a = h["action"]
         out.append({"action": a, "targets": parse_targets(a), "reason": h["reason"]})
     return out
@@ -477,13 +477,11 @@ def plan_switch(conn, title, site_id=None):
     srow = conn.execute("SELECT name FROM sites WHERE id=?", (sid,)).fetchone()
     out.update({"matched": True, "site_id": sid, "site_name": srow["name"] if srow else "",
                 "fault_lines": fl})
-    # 候选规则：优先取关键词命中标题的动作，其次取站点内其它启用动作
-    hits = {h["action"]["id"] for h in match_detail(conn, t)}
+    # 候选规则：优先取关键词命中标题的动作（语法错误规则除外），其次取站点内其它启用动作
+    hits = {h["action"]["id"] for h in match_detail(conn, t) if not h.get("error")}
     acts = conn.execute("SELECT * FROM actions WHERE site_id=? AND enabled=1 ORDER BY id",
                         (sid,)).fetchall()
     cands = [a for a in acts if a["id"] in hits] + [a for a in acts if a["id"] not in hits]
-    _AIOPS_TRACE.clear()
-    _AIOPS_TRACE["requests"] = []
     line_cache = {}
 
     def check_line(name):
@@ -507,9 +505,19 @@ def plan_switch(conn, title, site_id=None):
         n = q["pending"] + q["handling"]
         st.update({"status": "active" if n else "clear", "gs": kw,
                    "pending": q["pending"], "handling": q["handling"],
+                   "raw": q.get("raw") or "",
                    "titles": q["titles"], "requests": q.get("requests") or []})
         line_cache[name] = st
         return st
+
+    # trace 从本次判定的 steps 局部聚合（无线程间共享状态）
+    def _mk_trace():
+        reqs, raw = [], ""
+        for s in out["steps"]:
+            reqs.extend(s.get("requests") or [])
+            if not raw and s.get("raw"):
+                raw = s["raw"]
+        return {"requests": reqs, "raw": raw}
 
     for a in cands:
         tgs = parse_targets(a)
@@ -524,15 +532,13 @@ def plan_switch(conn, title, site_id=None):
             if not (tg["command_block"] or "").strip():
                 out["steps"][-1]["status"] = "no_cmd"
                 continue
-            out["trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
-                            "raw": _AIOPS_TRACE.get("raw") or ""}
+            out["trace"] = _mk_trace()
             out.update({"allow": True, "action": a, "target": tg,
                         "target_line": tg["line"],
                         "note": "规则「%s」阶梯降级选中目标线路 %s" % (a["name"], tg["line"])})
             return out
 
-    out["trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
-                    "raw": _AIOPS_TRACE.get("raw") or ""}
+    out["trace"] = _mk_trace()
     bad = [s for s in out["steps"] if s["status"] != "fault"]
     out["reason"] = ("站点「%s」无可切换的目标线路：%s"
                      % (out["site_name"] or sid,
@@ -1382,24 +1388,32 @@ def wait_exec_result(conn, log_id, timeout):
 def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
                   source_line="", decision_note="", init_tl=None, target_line=""):
     """创建执行记录并入队。返回 (log_id, skip_reason)。冷却/串行判断在此。
-    init_tl: 告警接入阶段已产生的时间线条目列表；target_line: 本次切换的目标线路。"""
+    init_tl: 告警接入阶段已产生的时间线条目列表；target_line: 本次切换的目标线路
+    （为空时取规则阶梯的第一目标——手动触发/旧配置语义）。"""
+    target_line = (target_line or "").strip()
+    if not target_line:
+        tgs = parse_targets(action)
+        if tgs:
+            target_line = tgs[0]["line"]
     dev = conn.execute("SELECT * FROM devices WHERE id=?", (action["device_id"],)).fetchone()
     if not dev:
         return None, "设备不存在"
     if not dev["enabled"]:
         return None, "设备已停用"
     # 冷却判断（演练 dry_run 不受冷却限制）
+    # 粒度 = 设备 + 目标线路方向：同方向冷却防抖，不同方向的阶梯降级互不封锁（B2）
     g_cooldown = int(kv_get(conn, "global_cooldown", "300") or 0)
     cooldown = action["cooldown"] or g_cooldown
     if cooldown > 0 and not dry_run:
         row = conn.execute(
-            "SELECT started_at FROM exec_logs WHERE action_id=? AND status IN ('running','success') "
-            "ORDER BY id DESC LIMIT 1", (action["id"],)).fetchone()
+            "SELECT started_at FROM exec_logs WHERE device_id=? AND target_line=? "
+            "AND status IN ('running','success') ORDER BY id DESC LIMIT 1",
+            (dev["id"], target_line or "")).fetchone()
         if row and row["started_at"]:
             try:
                 t0 = datetime.strptime(row["started_at"], "%Y-%m-%d %H:%M:%S")
                 if (datetime.now() - t0).total_seconds() < cooldown:
-                    return None, "冷却期内（%ds）" % cooldown
+                    return None, "该方向冷却期内（%ds）：%s" % (cooldown, target_line or "(默认)")
             except Exception:
                 pass
     tl = list(init_tl or [])
@@ -1674,7 +1688,7 @@ class Handler(BaseHTTPRequestHandler):
                     base["executed"] = True
                     # 同步等待执行结果（wait=0 时立即返回，仅带 task_id）
                     try:
-                        wait_s = int(body.get("wait", 120))
+                        wait_s = max(0, min(int(body.get("wait", 120)), 600))
                     except Exception:
                         wait_s = 120
                     if log_id is not None and wait_s > 0:
@@ -1723,10 +1737,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send_json({"error": "动作不存在"}, 404)
                 dry_run = 1 if str(body.get("dry_run", "")).lower() in ("1", "true", "yes") else 0
                 rollback = 1 if str(body.get("rollback", "")).lower() in ("1", "true", "yes") else 0
+                m_tgt = (body.get("target_line") or "").strip()
                 log_id, skip = submit_action(conn, act, "manual", body.get("title") or "",
                                              dry_run=dry_run, rollback=rollback,
+                                             target_line=m_tgt,
                                              init_tl=[{"ts": now(), "kind": "info",
-                                                       "text": "页面手动触发「%s」" % act["name"]}])
+                                                       "text": "页面手动触发「%s」%s"
+                                                       % (act["name"],
+                                                          ("（目标：%s）" % m_tgt) if m_tgt else "")}])
                 if log_id is None:
                     return self._send_json({"executed": False, "skip_reason": skip}, 409)
                 return self._send_json({"executed": True, "task_id": log_id})
@@ -1750,6 +1768,7 @@ class Handler(BaseHTTPRequestHandler):
                     dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (a["device_id"],)).fetchone()
                     out.append({"action_id": a["id"], "action_name": a["name"],
                                 "site": site["name"] if site else "", "reason": h["reason"],
+                                "error": bool(h.get("error")),
                                 "device": dict(dev) if dev else None,
                                 "command_lines": len(parse_block(a["command_block"]))})
                 # 多线路降级预演：按站点线路识别故障线路并挑目标（只读查询 AIOps，不执行）
@@ -1785,7 +1804,7 @@ class Handler(BaseHTTPRequestHandler):
                 unmatched = {}
                 matched_cnt = 0
                 for t in titles:
-                    hits = match_detail(conn, t)
+                    hits = [h for h in match_detail(conn, t) if not h.get("error")]
                     if not hits:
                         k = (t or "").strip() or "(空标题)"
                         unmatched[k] = unmatched.get(k, 0) + 1
@@ -2798,11 +2817,21 @@ function copyAction(id){const a=DATA.actions.find(x=>x.id==id);if(!a)return;
   editAction(id);$("a_id").value="";$("a_name").value=(a.name||"规则")+"-副本";
   $("mActTitle").textContent="复制规则 #"+id}
 function delAction(id){if(confirm("确认删除动作 #"+id+"？"))api("DELETE","/api/actions/"+id).then(()=>{showToast("已删除");loadActions()})}
+function actionTargets(x){let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
+  if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];return arr}
 function execAction(id,dry){if(dry===false&&id===0)return;
-  const q=dry?"?dry_run=1":"";
-  api("POST","/api/exec/"+id+q,{}).then(r=>{
+  const x=DATA.actions.find(a=>a.id==id);const q=dry?"?dry_run=1":"";
+  const go=tgt=>{api("POST","/api/exec/"+id+q,tgt?{target_line:tgt}:{}).then(r=>{
     showToast(r.executed?("已提交执行（任务 #"+r.task_id+"）"):("未执行："+r.skip_reason),!r.executed);
-    loadLogs()}).catch(e=>showToast("提交失败: "+e.message,1))}
+    loadLogs()}).catch(e=>showToast("提交失败: "+e.message,1))};
+  const tgs=x?actionTargets(x):[];
+  if(tgs.length>1){const names=tgs.map((t,i)=>(i+1)+"."+t.line+(t.command_block?'':'（缺命令）')).join("\n");
+    const pick=prompt("该规则含多个目标阶梯，选择本次手动执行的目标（输入序号，留空=第1目标）：\n"+names,"1");
+    if(pick===null)return;
+    const n=parseInt(pick||"1",10);const t=tgs[n-1];
+    if(!t)return showToast("无效序号",1);
+    go(t.line);return}
+  go("")}
 
 // ---- 设备 ----
 function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
@@ -2870,7 +2899,7 @@ function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines"
     <td>${ls.length?ls.map(l=>`<span class="tag ok" style="margin:0 6px 4px 0">${esc(l.name)}</span>`).join(""):'<span style="color:var(--text-faint)">未配置</span>'}</td>
     <td style="color:var(--text-muted)">${esc(x.remark)}</td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="editSite(${x.id})">编辑</button>
-    <button class="btn btn-sm btn-warning" onclick="manageLines(${x.id},'${esc(x.name)}')">线路</button>
+    <button class="btn btn-sm btn-warning" onclick="manageLines(${x.id})">线路</button>
     <button class="btn btn-sm btn-danger" onclick="delSite(${x.id})">删除</button></div></td></tr>`}).join(""):
     '<tr><td colspan=4><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>暂无站点</div></td></tr>'})}
 function editSite(id){const s=DATA.sites.find(x=>x.id==id)||{};
@@ -2882,8 +2911,9 @@ function saveSite(){const b={id:$("si_id").value||null,name:$("si_name").value.t
 function delSite(id){if(confirm("确认删除站点 #"+id+"？"))api("DELETE","/api/sites/"+id).then(()=>{showToast("已删除");loadSites()})}
 
 // ---- 站点线路（互斥判定依据） ----
-function manageLines(siteId,siteName){$("l_site").value=siteId;
-  $("mLineTitle").textContent="站点线路 · "+siteName;
+function manageLines(siteId){const s=(DATA.sites||[]).find(x=>x.id==siteId)||{};
+  $("l_site").value=siteId;
+  $("mLineTitle").textContent="站点线路 · "+(s.name||"");
   $("l_name").value="";$("l_kw").value="";$("l_ip").value="";
   loadLines(siteId);$("mLine").classList.add("show")}
 function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
@@ -2934,7 +2964,9 @@ function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
           ? `<span class="tag ok">将执行切换</span> 规则「${esc(p.action_name||"")}」→ 目标线路 <b>${esc(p.target_line||"")}</b>`
           : `<span class="tag bad">不会切换</span> ${esc(p.reason||"")}`}</div>
       </div>`}
-    if(r.hits&&r.hits.length){h+=r.hits.map(x=>`<div class="hit-ok">命中动作 <b>${esc(x.action_name)}</b>（站点 ${esc(x.site||"-")} / 设备 ${esc(x.device?x.device.name:"-")} / ${x.command_lines} 条命令）</div>`).join("")}
+    if(r.hits&&r.hits.length){h+=r.hits.map(x=>x.error
+      ?`<div class="hit-bad">规则 <b>${esc(x.action_name)}</b> 配置错误：${esc(x.reason)}</div>`
+      :`<div class="hit-ok">命中动作 <b>${esc(x.action_name)}</b>（站点 ${esc(x.site||"-")} / 设备 ${esc(x.device?x.device.name:"-")} / ${x.command_lines} 条命令）</div>`).join("")}
     o.innerHTML=h||`<div class="hit-bad">未命中任何站点线路或动作</div>`})}
 function replayRun(){const d=+$("rp_days").value;
   $("rp_out").innerHTML='<div style="color:var(--text-muted);padding:6px 0">正在拉取 AIOps 告警并回放，请稍候…</div>';
@@ -3009,8 +3041,33 @@ document.querySelectorAll(".modal").forEach(m=>{
 """
 
 
+def recover_running():
+    """进程重启后把残留的 running 执行记录标记为失败（B3）：
+    否则冷却查询命中 running 会令该方向永久封锁，wait 也永远超时。"""
+    conn = get_db()
+    try:
+        cur = conn.execute(
+            "UPDATE exec_logs SET status='failed', error='服务重启，任务中断', finished_at=? "
+            "WHERE status='running'", (now(),))
+        conn.commit()
+        return cur.rowcount
+    finally:
+        conn.close()
+
+
 def main():
     init_db()
+    n = recover_running()
+    if n:
+        print("[%s] 启动恢复：%d 条中断的 running 记录已标记为 failed" % (now(), n))
+    if LS_SECRET == "axd-line-switch-default-secret":
+        print("[%s] ⚠ 警告：LS_SECRET 仍为默认值，请在 .env 中设置独立密钥后重启" % now())
+    _conn = get_db()
+    try:
+        if (kv_get(_conn, "web_password", "admin123") or "admin123") == "admin123":
+            print("[%s] ⚠ 提醒：Web 登录密码仍为默认 admin123，请尽快在「全局设置」中修改" % now())
+    finally:
+        _conn.close()
     threading.Thread(target=_worker, daemon=True).start()
     server = ThreadingHTTPServer((LS_BIND, LS_PORT), Handler)
     print("[%s] Axd_Line_Switch 启动: http://%s:%d  db=%s  版本=%s"

@@ -262,6 +262,70 @@ def test_huawei_stelnet_prompt():
     srv.shutdown()
 
 
+def test_bad_regex_not_hit():
+    """B1：正则语法错误的规则不得命中任何标题（防劫持触发链）"""
+    conn.execute("INSERT INTO actions(site_id,name,device_id,match_type,match_keywords,target_line,command_block,enabled)"
+                 " VALUES(1,'坏正则',1,'regex','站点A[','X','cmd',1)")
+    conn.commit()
+    hits = [h for h in app.match_detail(conn, "完全无关的标题") if not h.get("error")]
+    assert not hits, hits
+    errs = [h for h in app.match_detail(conn, "任意标题") if h.get("error")]
+    assert len(errs) == 1 and "正则语法错误" in errs[0]["reason"], errs
+    fake_alarms([T_AIRTEL])
+    p_ = app.plan_switch(conn, T_AIRTEL)   # 坏正则存在时正常规则仍应正确选中
+    assert p_["allow"] and p_["target_line"] == "Vodacom", p_
+    print("PASS 场景13 坏正则规则不命中且可被预检标记（B1）")
+
+
+def test_cooldown_per_direction():
+    """B2：冷却粒度=设备+目标方向；不同方向的降级不被前一次切换封锁"""
+    import datetime as _dt
+    conn.execute("INSERT INTO actions(site_id,name,device_id,match_type,match_keywords,targets_json,target_line,cooldown,enabled)"
+                 " VALUES(2,'冷却测试',1,'contains','冷却站专线',?, 'Vodacom',600,1)",
+                 ('[{"line":"Vodacom","command_block":"c1","verify_block":"","expect_keywords":"",'
+                   '"nexthop":""},{"line":"4G","command_block":"c2","verify_block":"","expect_keywords":"",'
+                   '"nexthop":""}]',))
+    conn.execute("INSERT INTO sites(id,name) VALUES(2,'冷却站')") if not conn.execute(
+        "SELECT 1 FROM sites WHERE id=2").fetchone() else None
+    conn.execute("INSERT OR IGNORE INTO lines(site_id,name,alarm_keywords,priority,enabled) "
+                 "VALUES(2,'Vodacom','冷却站-Vodacom',1,1)")
+    conn.execute("INSERT OR IGNORE INTO lines(site_id,name,alarm_keywords,priority,enabled) "
+                 "VALUES(2,'4G','冷却站-4G',2,1)")
+    conn.commit()
+    act = conn.execute("SELECT * FROM actions WHERE name='冷却测试'").fetchone()
+    # 模拟刚成功切到 Vodacom（10s 前）
+    t0 = (_dt.datetime.now() - _dt.timedelta(seconds=10)).strftime("%Y-%m-%d %H:%M:%S")
+    conn.execute("INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,status,"
+                 "target_line,started_at,finished_at) VALUES(?, '冷却测试',1,'m','api','success','Vodacom',?,?)",
+                 (act["id"], t0, t0))
+    conn.commit()
+    # 同方向再次提交 → 冷却拦截
+    _, skip = app.submit_action(conn, act, "api", "t", target_line="Vodacom")
+    assert skip and "冷却" in skip, skip
+    # 不同方向（降级到 4G）→ 不受封锁
+    lid, skip2 = app.submit_action(conn, act, "api", "t", target_line="4G", dry_run=1)
+    assert not skip2 and lid, skip2
+    app._EXEC_QUEUE.get_nowait()  # 演练任务出队不执行
+    conn.execute("DELETE FROM exec_logs WHERE action_id=?", (act["id"],))
+    conn.execute("DELETE FROM actions WHERE id=?", (act["id"],))
+    conn.commit()
+    print("PASS 场景14 冷却按设备+目标方向：同方向拦截、跨方向降级放行（B2）")
+
+
+def test_recover_running():
+    """B3：启动恢复把残留 running 标记为 failed，冷却不被假 running 永久封锁"""
+    conn.execute("INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,status,"
+                 "target_line,started_at) VALUES(1,'r',1,'m','api','running','Vodacom','2026-01-01 00:00:00')")
+    conn.commit()
+    n = app.recover_running()
+    assert n >= 1, n
+    row = conn.execute("SELECT status,error FROM exec_logs WHERE status='running' LIMIT 1").fetchone()
+    assert row is None
+    left = conn.execute("SELECT error FROM exec_logs ORDER BY id DESC LIMIT 1").fetchone()
+    assert "服务重启" in left["error"], left
+    print("PASS 场景15 重启恢复 running→failed（B3）")
+
+
 if __name__ == "__main__":
     test_only_fault_line_active()
     test_degrade_to_third_line()
@@ -274,4 +338,7 @@ if __name__ == "__main__":
     test_parse_current_line()
     test_target_line_skip()
     test_huawei_stelnet_prompt()
+    test_bad_regex_not_hit()
+    test_cooldown_per_direction()
+    test_recover_running()
     print("\n全部判定逻辑测试通过")
