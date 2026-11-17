@@ -12,6 +12,7 @@ AIOps 接口用假数据注入，不依赖外网。
   5) 当前生效线路就是目标线路 → 不下发命令
 """
 import os
+import json
 import sys
 import tempfile
 import threading
@@ -30,15 +31,23 @@ for name, kw, pri, nh in [("Airtel", "41.243.21.170,Airtel", 1, "192.168.130.10"
                           ("4G", "41.243.21.170,4G", 3, "192.168.130.22")]:
     conn.execute("INSERT INTO lines(site_id,name,alarm_keywords,nexthop_ip,priority,enabled) "
                  "VALUES(1,?,?,?,?,1)", (name, kw, nh, pri))
-# 每个"可切换到"的线路一个动作（命令块=全量状态，只依赖目标线路）
-ACT = {}
-for tgt in ("Airtel", "Vodacom", "4G"):
-    cur = conn.execute(
-        "INSERT INTO actions(site_id,name,device_id,match_type,match_keywords,command_block,"
-        "verify_block,expect_keywords,target_line,cooldown,enabled) "
-        "VALUES(1,?,1,'contains','41.243.21.170',?,?,?,?,0,1)",
-        ("切到" + tgt, "display ip int brief", "display ip routing-table", "1.1.1.1", tgt))
-    ACT[tgt] = cur.lastrowid
+# 一条规则 = 一个降级阶梯（targets_json 按顺序配置目标线路与各自命令）
+import json as _json
+def _mk_targets(lines_cmd_map, verify="display ip routing-table"):
+    return _json.dumps([{"line": nm, "command_block": cb, "verify_block": verify,
+                         "expect_keywords": ek, "nexthop": ""}
+                        for nm, cb, ek in lines_cmd_map], ensure_ascii=False)
+# 主规则：阶梯 Airtel→Vodacom→4G（顺序即降级优先级）
+LADDER = _mk_targets([("Airtel", "peer 192.168.130.10 enable", "192.168.130.10"),
+                      ("Vodacom", "peer 1.1.1.1 enable", "1.1.1.1"),
+                      ("4G", "peer 192.168.130.22 enable", "192.168.130.22")])
+cur = conn.execute(
+    "INSERT INTO actions(site_id,name,device_id,match_type,match_keywords,command_block,"
+    "verify_block,expect_keywords,target_line,targets_json,cooldown,enabled) "
+    "VALUES(1,'拉米卡降级',1,'contains','41.243.21.170','','','','Airtel',?,0,1)",
+    (LADDER,))
+RULE = cur.lastrowid
+# 无命令阶梯的规则（场景4 用：把 Vodacom 目标命令清空后另存一条对照规则用不到，直接 UPDATE）
 # 站点 2（未配线路）保留一个"故障→目标"的传统动作
 conn.execute("INSERT INTO actions(site_id,name,device_id,match_type,match_keywords,command_block,"
              "target_line,cooldown,enabled) VALUES(2,'老动作',1,'contains','HK-ESXi','display ver','',0,1)")
@@ -69,8 +78,8 @@ def test_only_fault_line_active():
     assert p["allow"] and p["target_line"] == "Vodacom", p
     assert p["fault_lines"] == ["Airtel"], p
     assert steps_of(p) == {"Airtel": "fault", "Vodacom": "clear"}, steps_of(p)
-    assert p["action"]["id"] == ACT["Vodacom"], p["action"]
-    print("PASS 场景1 仅故障线路(Airtel)告警 → 目标 Vodacom（priority 2）")
+    assert p["action"]["id"] == RULE, p["action"]
+    print("PASS 场景1 仅故障线路(Airtel)告警 → 阶梯第2目标 Vodacom")
 
 
 def test_degrade_to_third_line():
@@ -78,28 +87,34 @@ def test_degrade_to_third_line():
     p = app.plan_switch(conn, T_AIRTEL)
     assert p["allow"] and p["target_line"] == "4G", p
     assert steps_of(p) == {"Airtel": "fault", "Vodacom": "active", "4G": "clear"}, steps_of(p)
-    assert p["action"]["id"] == ACT["4G"], p["action"]
-    print("PASS 场景2 前两条(Airtel/Vodacom)均告警 → 降级切到 4G（priority 3）")
+    assert p["action"]["id"] == RULE, p["action"]
+    print("PASS 场景2 前两条(Airtel/Vodacom)均告警 → 阶梯降级到第3目标 4G")
 
 
 def test_all_lines_active():
     fake_alarms([T_AIRTEL, T_VODA, T_4G])
     p = app.plan_switch(conn, T_AIRTEL)
     assert not p["allow"], p
-    assert "无可切换的健康线路" in p["reason"], p["reason"]
+    assert "无可切换的目标线路" in p["reason"], p["reason"]
     print("PASS 场景3 三条线路全部告警 → 不切换：%s" % p["reason"])
 
 
-def test_skip_candidate_without_action():
-    """候选线路无对应动作 → 跳过并继续找下一条（用户确认的策略）"""
+def test_skip_candidate_without_cmd():
+    """阶梯中某目标未配命令 → 跳过并继续下一条（用户确认的策略）"""
     fake_alarms([T_AIRTEL])
-    conn.execute("UPDATE actions SET enabled=0 WHERE id=?", (ACT["Vodacom"],))
+    old = conn.execute("SELECT targets_json FROM actions WHERE id=?", (RULE,)).fetchone()[0]
+    ts = json.loads(old)
+    for x in ts:
+        if x["line"] == "Vodacom":
+            x["command_block"] = ""
+    conn.execute("UPDATE actions SET targets_json=? WHERE id=?",
+                 (json.dumps(ts, ensure_ascii=False), RULE))
     conn.commit()
     p = app.plan_switch(conn, T_AIRTEL)
     assert p["allow"] and p["target_line"] == "4G", p
-    assert steps_of(p)["Vodacom"] == "no_action", steps_of(p)
-    print("PASS 场景4 Vodacom 无切换动作 → 跳过并继续，目标 4G")
-    conn.execute("UPDATE actions SET enabled=1 WHERE id=?", (ACT["Vodacom"],))
+    assert steps_of(p)["Vodacom"] == "no_cmd", steps_of(p)
+    print("PASS 场景4 Vodacom 目标缺切换命令 → 跳过并继续，目标 4G")
+    conn.execute("UPDATE actions SET targets_json=? WHERE id=?", (old, RULE))
     conn.commit()
 
 
@@ -127,8 +142,8 @@ def test_query_error_skipped():
     p = app.plan_switch(conn, T_AIRTEL)
     assert not p["allow"], p
     assert steps_of(p).get("Vodacom") == "query_error", steps_of(p)
-    assert "无可切换的健康线路" in p["reason"], p["reason"]
-    print("PASS 场景7 AIOps 查询失败 → 该线路按不可用跳过，无可切换时不下发")
+    assert "无可切换的目标线路" in p["reason"], p["reason"]
+    print("PASS 场景7 AIOps 查询失败 → 该目标按不可用跳过，全部失败时不下发")
 
 
 def test_multi_site_conflict():
@@ -251,7 +266,7 @@ if __name__ == "__main__":
     test_only_fault_line_active()
     test_degrade_to_third_line()
     test_all_lines_active()
-    test_skip_candidate_without_action()
+    test_skip_candidate_without_cmd()
     test_title_not_match_line()
     test_site_without_lines_legacy()
     test_query_error_skipped()

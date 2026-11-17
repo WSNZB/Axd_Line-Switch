@@ -232,7 +232,9 @@ def init_db():
         ("actions", "verify_block", "TEXT DEFAULT ''"),
         ("actions", "expect_keywords", "TEXT DEFAULT ''"),
         ("actions", "target_line", "TEXT DEFAULT ''"),
+        ("actions", "targets_json", "TEXT DEFAULT ''"),
         ("exec_logs", "target_line", "TEXT DEFAULT ''"),
+        ("exec_logs", "target_override", "TEXT DEFAULT ''"),
         ("exec_logs", "precheck_line", "TEXT DEFAULT ''"),
         ("exec_logs", "session_log", "TEXT DEFAULT ''"),
         ("exec_logs", "source_line", "TEXT DEFAULT ''"),
@@ -360,21 +362,31 @@ def site_lines(conn, site_id):
                         (site_id,)).fetchall()
 
 
-def action_for_target(conn, site_id, line_name):
-    """取「切到某目标线路」的启用动作：同站点、target_line 名称匹配。
-    兼容旧配置：站点只有一个启用动作且未填目标线路时，视其为该站点唯一切换动作。"""
-    if not site_id:
-        return None
-    rows = conn.execute("SELECT * FROM actions WHERE site_id=? AND enabled=1 ORDER BY id",
-                        (site_id,)).fetchall()
-    name = (line_name or "").strip()
-    if name:
-        for a in rows:
-            if (a["target_line"] or "").strip() == name:
-                return a
-    if len(rows) == 1 and not (rows[0]["target_line"] or "").strip():
-        return rows[0]
-    return None
+def parse_targets(act):
+    """规则的降级阶梯：targets_json → [{line,command_block,verify_block,expect_keywords,nexthop}]。
+    旧规则（无阶梯）→ 由 target_line/command_block 等合成单目标阶梯。"""
+    raw = (act["targets_json"] or "").strip() if "targets_json" in act.keys() else ""
+    ts = []
+    if raw:
+        try:
+            arr = json.loads(raw)
+            if isinstance(arr, list):
+                for x in arr:
+                    nm = (x.get("line") or "").strip()
+                    if nm:
+                        ts.append({"line": nm, "command_block": x.get("command_block") or "",
+                                   "verify_block": x.get("verify_block") or "",
+                                   "expect_keywords": x.get("expect_keywords") or "",
+                                   "nexthop": x.get("nexthop") or ""})
+        except Exception:
+            ts = []
+    if ts:
+        return ts
+    if (act["target_line"] or "").strip():
+        return [{"line": act["target_line"].strip(), "command_block": act["command_block"] or "",
+                 "verify_block": act["verify_block"] or "",
+                 "expect_keywords": act["expect_keywords"] or "", "nexthop": ""}]
+    return []
 
 
 def resolve_fault_sites(conn, title):
@@ -390,23 +402,34 @@ def resolve_fault_sites(conn, title):
     return faults, site_names
 
 
+def matched_actions(conn, title):
+    """启用中、关键词命中标题的动作（含阶梯目标信息）。"""
+    out = []
+    for h in match_detail(conn, title):
+        a = h["action"]
+        out.append({"action": a, "targets": parse_targets(a), "reason": h["reason"]})
+    return out
+
+
 _STEP_STATUS_TXT = {
     "fault": "故障线路，排除", "active": "有活跃告警，不可选", "clear": "无活跃告警，可选",
-    "no_action": "无活跃告警，但未配置切到该线路的动作", "no_keyword": "未配置告警关键字，无法查询",
+    "no_cmd": "健康但未配置本方向的切换命令", "no_keyword": "未配置告警关键字，无法查询",
     "query_error": "查询失败，按不可用跳过", "legacy": "兼容路径：站点未配线路，走动作匹配"}
 
 
 def plan_switch(conn, title, site_id=None):
-    """多线路降级决策。
-    规则：故障线路由告警标题匹配站点线路关键字确定；其余线路按 priority 升序（1 最优先）
-    用各自告警关键字作为 gs 查询 AIOps 未处理/处理中告警（不按时间过滤）；第一条
-    「无活跃告警且已配置切到它动作」的线路即目标线路；全部线路均告警/无可用动作 → 不切换。
-    站点未配置线路时回退按动作匹配关键词直接执行（兼容旧配置）。
+    """多线路降级决策（规则内阶梯模型）。
+    1) 故障线路 = 告警标题匹配站点线路关键字；
+    2) 候选规则 = 该站点启用动作（按各自 match_keywords 命中标题的优先），
+       每条规则的 targets 即降级阶梯：按顺序用各目标线路的告警关键字 gs 直查
+       AIOps 未处理/处理中（不按时间过滤），第一条健康且配置了本方向命令的目标即选中；
+    3) 全部规则的所有目标均不健康/缺命令 → 不切换；
+    4) 站点未配线路 → 回退按动作关键词直接执行（兼容旧配置）。
     返回 dict：matched/allow/reason/note/site_id/site_name/fault_lines/target_line/
-              action/steps/trace/legacy。steps 为逐条线路体检明细（供证据展示）。"""
+              action/target（选中目标配置）/steps/trace/legacy。"""
     out = {"matched": False, "allow": False, "reason": "", "note": "", "site_id": site_id,
            "site_name": "", "fault_lines": [], "target_line": "", "action": None,
-           "steps": [], "trace": {}, "legacy": False}
+           "target": None, "steps": [], "trace": {}, "legacy": False}
     t = (title or "").strip()
     if not t:
         out["reason"] = "缺少告警标题"
@@ -429,10 +452,11 @@ def plan_switch(conn, title, site_id=None):
         return out
 
     if not faults:
-        md = match_detail(conn, t)
+        md = matched_actions(conn, t)
         if not md:
             return out
-        act = md[0]["action"]
+        m0 = md[0]
+        act = m0["action"]
         srow = conn.execute("SELECT name FROM sites WHERE id=?", (act["site_id"] or 0,)).fetchone()
         out.update({"matched": True, "site_id": act["site_id"], "site_name": srow["name"] if srow else ""})
         if site_lines(conn, act["site_id"]):
@@ -440,77 +464,97 @@ def plan_switch(conn, title, site_id=None):
                              "请检查站点线路配置" % (srow["name"] if srow else act["site_id"]))
             out["note"] = "线路关键字未命中标题"
             return out
-        out.update({"legacy": True, "allow": True, "action": act,
-                    "target_line": (act["target_line"] or "").strip(),
+        tg = m0["targets"][0] if m0["targets"] else None
+        out.update({"legacy": True, "allow": True, "action": act, "target": tg,
+                    "target_line": (tg or {}).get("line", ""),
                     "note": "站点未配置线路，按动作匹配直接执行（不做多线路降级判定）"})
         out["steps"] = [{"line": out["target_line"] or "(动作默认)", "status": "legacy"}]
         return out
 
     sid = list(faults.keys())[0]
     fl = faults[sid]
-    lines = site_lines(conn, sid)
-    out.update({"matched": True, "site_id": sid, "site_name": site_names.get(sid, ""),
-                "fault_lines": fl, "lines_total": len(lines)})
+    lines = {ln["name"]: ln for ln in site_lines(conn, sid)}
+    srow = conn.execute("SELECT name FROM sites WHERE id=?", (sid,)).fetchone()
+    out.update({"matched": True, "site_id": sid, "site_name": srow["name"] if srow else "",
+                "fault_lines": fl})
+    # 候选规则：优先取关键词命中标题的动作，其次取站点内其它启用动作
+    hits = {h["action"]["id"] for h in match_detail(conn, t)}
+    acts = conn.execute("SELECT * FROM actions WHERE site_id=? AND enabled=1 ORDER BY id",
+                        (sid,)).fetchall()
+    cands = [a for a in acts if a["id"] in hits] + [a for a in acts if a["id"] not in hits]
     _AIOPS_TRACE.clear()
     _AIOPS_TRACE["requests"] = []
-    target = None
-    for ln in lines:
-        st = {"line": ln["name"], "priority": ln["priority"], "nexthop": ln["nexthop_ip"]}
-        if ln["name"] in fl:
+    line_cache = {}
+
+    def check_line(name):
+        """线路健康状态查询（同一次判定内缓存）。返回 step dict。"""
+        ln = lines.get(name)
+        st = {"line": name, "priority": ln["priority"] if ln else None,
+              "nexthop": ln["nexthop_ip"] if ln else ""}
+        if name in fl:
             st["status"] = "fault"
-            out["steps"].append(st)
-            continue
-        kw = (ln["alarm_keywords"] or "").strip()
+            return st
+        kw = (ln["alarm_keywords"] or "").strip() if ln else ""
         if not kw:
             st["status"] = "no_keyword"
-            out["steps"].append(st)
-            continue
+            return st
+        if name in line_cache:
+            return line_cache[name]
         try:
             q = query_line_active(conn, kw)
         except Exception as e:
             st.update({"status": "query_error", "gs": kw, "error": str(e)})
-            out["steps"].append(st)
-            continue
+            return st
         n = q["pending"] + q["handling"]
         st.update({"status": "active" if n else "clear", "gs": kw,
                    "pending": q["pending"], "handling": q["handling"],
                    "titles": q["titles"], "requests": q.get("requests") or []})
-        out["steps"].append(st)
-        if n:
+        line_cache[name] = st
+        return st
+
+    for a in cands:
+        tgs = parse_targets(a)
+        if not tgs:
             continue
-        act = action_for_target(conn, sid, ln["name"])
-        if not act:
-            st["status"] = "no_action"
-            continue
-        target = (ln, act)
-        break
+        for tg in tgs:
+            st = check_line(tg["line"])
+            st["action"] = a["name"]
+            out["steps"].append(dict(st))
+            if st["status"] != "clear":
+                continue
+            if not (tg["command_block"] or "").strip():
+                out["steps"][-1]["status"] = "no_cmd"
+                continue
+            out["trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
+                            "raw": _AIOPS_TRACE.get("raw") or ""}
+            out.update({"allow": True, "action": a, "target": tg,
+                        "target_line": tg["line"],
+                        "note": "规则「%s」阶梯降级选中目标线路 %s" % (a["name"], tg["line"])})
+            return out
 
     out["trace"] = {"requests": list(_AIOPS_TRACE.get("requests") or []),
                     "raw": _AIOPS_TRACE.get("raw") or ""}
-    if not target:
-        bad = [s for s in out["steps"] if s["status"] != "fault"]
-        out["reason"] = ("站点「%s」无可切换的健康线路：%s"
-                         % (out["site_name"] or sid,
-                            "；".join("%s %s" % (s["line"], _STEP_STATUS_TXT.get(s["status"], s["status"]))
-                                      for s in bad) or "无其它线路"))
-        out["note"] = "降级遍历结束：所有候选线路均在告警或缺少切换动作，本次不切换"
-        return out
-
-    ln, act = target
-    out.update({"allow": True, "target_line": ln["name"], "action": act,
-                "note": "按优先级降级选中目标线路 %s（priority %s）" % (ln["name"], ln["priority"])})
+    bad = [s for s in out["steps"] if s["status"] != "fault"]
+    out["reason"] = ("站点「%s」无可切换的目标线路：%s"
+                     % (out["site_name"] or sid,
+                        "；".join("%s %s（规则:%s）" % (s["line"], _STEP_STATUS_TXT.get(s["status"], s["status"]), s.get("action", "-"))
+                                  for s in bad) or "站点下没有配置目标线路的规则"))
+    out["note"] = "降级遍历结束：所有候选目标均在告警或缺少本方向命令，本次不切换"
     return out
 
 
 def line_steps_evidence(plan):
     """把降级体检过程拼成可核对的证据文本（含真实请求 URL 与原始响应）。"""
-    ev = ["判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；其余线路按 priority 升序"
-          "（1 最优先）用各自告警关键字作为 gs 查询 AIOps（is_ignore=0，status 未处理0/处理中1，"
-          "不按时间过滤），第一条无活跃告警且已配置切换动作的线路即目标线路。"]
+    ev = ["判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；随后按各切换规则内配置的"
+          "目标线路阶梯（顺序=优先级）逐条体检：用目标线路的告警关键字作为 gs 查询 AIOps"
+          "（is_ignore=0，status 未处理0/处理中1，不按时间过滤），第一条无活跃告警且已配置"
+          "本方向切换命令的目标线路即选中。"]
     for s in plan.get("steps") or []:
         st = s.get("status")
-        head = "线路 %s（priority %s）" % (s.get("line"), s.get("priority"))
-        if st in ("active", "clear", "no_action"):
+        head = "目标 %s" % s.get("line")
+        if s.get("action"):
+            head += "（规则:%s）" % s["action"]
+        if st in ("active", "clear", "no_cmd"):
             head += "：gs=%s，未处理 %s，处理中 %s" % (s.get("gs"), s.get("pending"), s.get("handling"))
             if s.get("titles"):
                 head += "；样例: " + " | ".join(s["titles"])
@@ -1135,7 +1179,27 @@ def execute_action(log_id):
                          (now(), log_id))
             conn.commit()
             return
-        block = (act["rollback_block"] if log["rollback"] else act["command_block"]) or ""
+        # 命令块：非回切时优先取规则阶梯中"本次选中目标线路"的配置
+        tgt_name = (log["target_line"] or "").strip() if not log["rollback"] else ""
+        tg = None
+        for x in parse_targets(act):
+            if x["line"] == tgt_name:
+                tg = x
+                break
+        if log["rollback"]:
+            block = act["rollback_block"]
+            verify_cmds = []
+            expect_kws = []
+        elif tg:
+            block = tg["command_block"]
+            verify_cmds = parse_block(tg["verify_block"])
+            expect_kws = [k.strip() for k in (tg["expect_keywords"] or "").split(",") if k.strip()]
+        else:
+            block = act["command_block"]
+            verify_cmds = parse_block(act["verify_block"])
+            expect_kws = [k.strip() for k in (act["expect_keywords"] or "").split(",") if k.strip()]
+        if tg and not expect_kws and (tg.get("nexthop") or "").strip():
+            expect_kws = [tg["nexthop"].strip()]
         cmds = parse_block(block)
         if not cmds and not log["dry_run"]:
             tl_append(conn, log_id, "命令块为空，任务终止", "bad")
@@ -1143,8 +1207,6 @@ def execute_action(log_id):
                          (now(), log_id))
             conn.commit()
             return
-        verify_cmds = parse_block(act["verify_block"]) if not log["rollback"] else []
-        expect_kws = [k.strip() for k in (act["expect_keywords"] or "").split(",") if k.strip()]
         # 目标线路：回切（已隐藏）不做"是否已在目标线路"的跳过判断
         tgt = "" if log["rollback"] else ((log["target_line"] if "target_line" in log.keys() else "")
                                           or act["target_line"] or "")
@@ -1456,7 +1518,7 @@ class Handler(BaseHTTPRequestHandler):
                                      "fault_lines": plan.get("fault_lines"),
                                      "target_line": plan.get("target_line"),
                                      "steps": [{k: s.get(k) for k in ("line", "priority", "status",
-                                                                      "pending", "handling")}
+                                                                      "pending", "handling", "action")}
                                                for s in plan.get("steps") or []]}}
                 # 逐条线路降级体检证据（真实 gs 请求 + 原始响应）
                 if plan.get("fault_lines"):
@@ -1467,7 +1529,8 @@ class Handler(BaseHTTPRequestHandler):
                                     "ev": line_steps_evidence(plan)})
                 if plan.get("target_line"):
                     init_tl.append({"ts": now(), "kind": "ok",
-                                    "text": "降级判定选中目标线路：%s" % plan["target_line"]})
+                                    "text": "降级判定选中目标线路：%s（规则：%s）"
+                                            % (plan["target_line"], act["name"] if act else "-")})
                 if not plan["allow"]:
                     reason = plan["reason"] or "判定不切换"
                     init_tl.append({"ts": now(), "kind": "bad", "text": "判定不切换：%s" % reason})
@@ -1586,7 +1649,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "legacy": p.get("legacy"),
                                 "action_name": p["action"]["name"] if p["action"] else None,
                                 "steps": [{k: s.get(k) for k in ("line", "priority", "status",
-                                                                 "pending", "handling")}
+                                                                 "pending", "handling", "action")}
                                           for s in p.get("steps") or []]}
                     except Exception as e:
                         plan = {"error": str(e)}
@@ -1671,7 +1734,7 @@ class Handler(BaseHTTPRequestHandler):
         fields = {}
         for k in ("site_id", "name", "device_id", "match_type", "match_keywords",
                   "command_block", "rollback_block", "verify_block", "expect_keywords",
-                  "target_line", "cooldown", "enabled", "remark"):
+                  "target_line", "targets_json", "cooldown", "enabled", "remark"):
             if k in body:
                 fields[k] = body[k]
         if act_id:
@@ -2151,9 +2214,9 @@ details summary:hover{color:var(--primary)}
       <div class="card-body" id="cov_out"></div>
     </div>
     <div class="card">
-      <div class="card-header"><h3>动作规则<span class="q" data-tip="每个动作 = 「切到某条目标线路」的一组命令（命令块为全量状态：先 undo 其它方向再添加本方向，与从哪条切过来无关）。&#10;同一站点请按「目标线路」各建一条动作；告警触发时系统按站点线路的 priority 升序降级，选第一条无活跃告警的线路作为目标并执行对应动作。&#10;匹配关键词仅用于「匹配预检」与站点未配置线路时的兼容匹配；命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
+      <div class="card-header"><h3>动作规则<span class="q" data-tip="每个动作 = 「切到某条目标线路」的一组命令（命令块为全量状态：先 undo 其它方向再添加本方向，与从哪条切过来无关）。&#10;同一站点请按「目标线路」各建一条动作；告警触发时系统按站点线路的 priority 升序降级，选第一条无活跃告警的线路作为目标并执行对应动作。&#10;匹配关键词仅用于「匹配预检」与站点未配置线路时的兼容匹配；命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:90px">状态</th><th style="width:220px">动作名 / 设备</th><th style="width:120px">目标线路</th>
+        <th style="width:90px">状态</th><th style="width:220px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
         <th>匹配关键词 / 正则（预检用）</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
       <tbody id="acttb"></tbody></table></div>
     </div>
@@ -2223,12 +2286,12 @@ details summary:hover{color:var(--primary)}
 </div>
 
 <!-- 动作编辑 -->
-<div class="modal" id="mAct"><div class="box">
+<div class="modal" id="mAct"><div class="box" style="width:860px;max-width:94vw">
   <div class="mhd"><h3 id="mActTitle">切换动作</h3><button class="mx" onclick="closeM('mAct')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="a_id">
   <div class="grid2">
-    <div><label>动作名称 *</label><input id="a_name" placeholder="如：切到4G"></div>
+    <div><label>规则名称 *</label><input id="a_name" placeholder="如：拉米卡-故障降级切换"></div>
     <div><label>所属站点</label><select id="a_site" onchange="onActionSiteChange()"></select></div>
   </div>
   <div class="grid2">
@@ -2236,23 +2299,17 @@ details summary:hover{color:var(--primary)}
     <div><label>匹配方式</label><select id="a_mtype"><option value="contains">包含关键词</option><option value="regex">正则表达式</option></select></div>
   </div>
   <div class="grid2">
-    <div><label>匹配线路（触发动作的故障线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路，选中后自动填充匹配关键词=该线路告警关键字。&#10;多线路模式下，触发时由站点线路关键字识别故障线路、按线路 priority 降级选择目标线路；本字段主要用于「匹配预检」以及站点未配置线路时的兼容匹配。">?</span></label><select id="a_line" onchange="onActionLineChange()"></select></div>
-    <div><label>目标线路（切换后要生效的线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路（不含已选的匹配线路）。选中后自动填充期望关键词=该线路的下一跳IP，切换完成后用验证命令检查路由是否指向它。">?</span></label><select id="a_tline" onchange="onActionTLineChange()"></select></div>
+    <div><label>故障线路（告警说的是哪条）<span class="q" data-tip="读取站点维护的线路。选中后自动填充匹配关键词=该线路告警关键字，用于「匹配预检」；站点未配线路时它就是触发关键词。">?</span></label><select id="a_line" onchange="onActionLineChange()"></select></div>
+    <div><label>匹配关键词 / 正则（站点已配线路时仅预检用）</label><input id="a_kw" placeholder="选择故障线路后自动填充"></div>
   </div>
-  <input type="hidden" id="a_target">
-  <label>匹配关键词 / 正则（可选：仅匹配预检使用；站点未维护线路时用于触发匹配，此时必填）</label>
-  <input id="a_kw" placeholder="选择匹配线路后自动填充">
-  <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" data-tip="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
-  <textarea id="a_cmd" rows="10"></textarea>
-  <div id="a_cmd_hint" style="display:none;font-size:12px;color:var(--warn-d);margin-top:4px"></div>
   <textarea id="a_rb" style="display:none"></textarea>
-  <label>验证命令块（可选，切换完成后重新登录执行并检查期望内容）</label>
-  <textarea id="a_verify" rows="2" placeholder="display ip routing-table"></textarea>
-  <div class="grid2">
-    <div><label>期望关键词（自动取目标线路下一跳IP）</label><input id="a_expect"></div>
+  <label>目标线路阶梯（降级顺序=列表顺序，第一条最优先）<span class="q" data-tip="收到该线路告警后：按阶梯顺序逐条查询目标线路是否有未处理/处理中告警，选中第一条健康且配了切换命令的目标并下发它的命令块。&#10;每个目标的命令块建议为「全量状态」：undo 其它方向策略 + 添加本方向。&#10;期望关键词默认取该线路下一跳IP，用于切换后验证路由指向。">?</span></label>
+  <div id="tgt_box" style="display:flex;flex-direction:column;gap:10px"></div>
+  <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addTarget()">＋ 添加目标线路</button>
+  <div class="grid2" style="margin-top:14px">
     <div><label>冷却时间(秒，0=用全局)</label><input id="a_cd" type="number" value="0"></div>
+    <label class="sw"><input type="checkbox" id="a_en" checked><span>启用该规则</span></label>
   </div>
-  <label class="sw"><input type="checkbox" id="a_en" checked><span>启用该动作</span></label>
   </div>
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mAct')">取消</button>
@@ -2466,43 +2523,54 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
 
 // ---- 动作 ----
 function renderCoverage(){const o=$("cov_out");if(!o)return;
-  const tip='<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">动作与线路的联动关系：触发时先用<b>线路告警关键字</b>识别故障线路，再按 <b>priority</b> 降级选目标线路，最后执行<b>同站点内「目标线路」一致</b>的动作——动作之间无需互相关联，同站点+目标线路即关联。点红色线路补建动作时会自动继承本站点现有动作的设备与命令块模板。</div>';
+  const tip='<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">一条切换规则 = 一个降级阶梯：规则内按顺序配置多个目标线路及各自的切换命令。告警触发后先用<b>线路告警关键字</b>识别故障线路，再按阶梯顺序逐条查询目标线路是否有未处理/处理中告警，选中第一条健康目标并下发它的命令。点红色线路可追加到规则阶梯。</div>';
   if(!DATA.sites.length){o.innerHTML=tip+'<div class="empty">暂无站点</div>';return}
   o.innerHTML=tip+DATA.sites.map(s=>{
-    const ls=DATA.lines.filter(l=>l.site_id==s.id).sort((a,b)=>a.priority-b.priority||a.id-b.id);
+    const ls=DATA.lines.filter(l=>l.site_id==s.id);
     if(!ls.length)return `<div class="cov-row"><b style="min-width:120px">${esc(s.name)}</b>
       <span style="color:var(--text-faint);font-size:12px">未维护线路：该站点走动作关键词兼容匹配（无降级）</span></div>`;
     const acts=DATA.actions.filter(a=>a.site_id==s.id&&a.enabled);
-    const hit=l=>acts.find(x=>(x.target_line||"").trim()===l.name);
-    const chips=ls.map(l=>{const a=hit(l);
-      return a?`<span class="cov-chip ok" title="已配动作：${esc(a.name)}">${esc(l.name)}<i>P${l.priority}</i></span>`
-              :`<span class="cov-chip bad" title="缺少「切到${esc(l.name)}」的动作，点此补建" onclick="newActionFor(${s.id},${l.id})">${esc(l.name)}<i>P${l.priority}</i></span>`}).join("");
-    const done=ls.filter(l=>hit(l)).length;
-    return `<div class="cov-row"><b style="min-width:120px">${esc(s.name)}</b>
-      <div style="flex:1;display:flex;flex-wrap:wrap;gap:8px;align-items:center">${chips}</div>
+    let tgMap={};acts.forEach(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
+      if(!arr.length&&a.target_line)arr=[{line:a.target_line,command_block:a.command_block}];
+      arr.forEach(t=>{if(!tgMap[t.line])tgMap[t.line]=a.name})});
+    const chips=ls.map(l=>tgMap[l.name]
+      ?`<span class="cov-chip ok" title="规则「${esc(tgMap[l.name])}」已含该目标">${esc(l.name)}</span>`
+      :`<span class="cov-chip bad" title="没有规则包含「切到${esc(l.name)}」，点此追加到规则阶梯" onclick="newActionFor(${s.id},${l.id})">${esc(l.name)}</span>`).join("");
+    const done=ls.filter(l=>tgMap[l.name]).length;
+    const ladder=acts.map(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
+      if(!arr.length&&a.target_line)arr=[{line:a.target_line,command_block:a.command_block}];
+      return arr.length?`<div style="font-size:12px;color:var(--text-muted);margin-top:4px">└ ${esc(a.name)}：${arr.map((t,i)=>`<span style="color:${t.command_block?'var(--text-main)':'var(--danger-d)'}">${i+1}.${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(' → ')}</div>`:''}).join("");
+    return `<div class="cov-row" style="align-items:flex-start"><b style="min-width:120px;padding-top:5px">${esc(s.name)}</b>
+      <div style="flex:1"><div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${chips}</div>${ladder}</div>
       <span style="font-size:12px;color:${done===ls.length?"var(--success-d)":"var(--warn-d)"}">覆盖 ${done}/${ls.length}</span></div>`}).join("")}
 function newActionFor(siteId,lineId){
-  editAction(0);
-  $("a_site").value=siteId;refreshActionLines();$("a_line").value="";
-  const l=DATA.lines.find(x=>x.id==lineId);if(!l)return;
-  $("a_tline").value=lineId;onActionTLineChange();
-  $("a_name").value="切到"+l.name;
-  // 联动：继承同站点现有动作的设备/命令块模板/验证命令/冷却，只需把命令块改为本方向
+  // 联动：站点已有规则 → 打开该规则编辑并把缺失线路追加到阶梯；否则新建规则预置该目标
   const ref=DATA.actions.find(a=>a.site_id==siteId&&a.enabled);
-  const hint=$("a_cmd_hint");hint.style.display="none";
-  if(ref){$("a_device").value=ref.device_id||"";$("a_cd").value=ref.cooldown||0;
-    $("a_verify").value=ref.verify_block||"";
-    $("a_cmd").value=ref.command_block||"";
-    hint.textContent="⚠ 命令块复制自站点动作「"+ref.name+"」，方向策略不同——请改为：undo 其它线路方向（含 "+ref.target_line+"），添加 "+l.name+" 方向（下一跳 "+(l.nexthop_ip||"未填")+"）";
-    hint.style.display="block"}
-  $("mActTitle").textContent="新建动作（站点线路："+l.name+"）"}
+  if(ref){editAction(ref.id);
+    const l=DATA.lines.find(x=>String(x.id)===String(lineId));
+    if(l&&!TGT.some(t=>t.line===l.name)){readTargetInputs();
+      TGT.push({line:l.name,command_block:"",verify_block:"display ip routing-table",
+                expect_keywords:l.nexthop_ip||"",nexthop:l.nexthop_ip||"",_lineId:l.id});
+      renderTargets();
+      showToast("已把「"+l.name+"」追加为优先级 "+TGT.length+" 的目标，请补填该方向切换命令后保存")}
+    return}
+  editAction(0);
+  $("a_site").value=siteId;refreshActionLines();
+  const l=DATA.lines.find(x=>String(x.id)===String(lineId));if(!l)return;
+  $("a_name").value="切到"+l.name;
+  TGT=[{line:l.name,command_block:"",verify_block:"display ip routing-table",
+        expect_keywords:l.nexthop_ip||"",nexthop:l.nexthop_ip||"",_lineId:l.id}];
+  renderTargets();
+  $("mActTitle").textContent="新建切换规则（目标："+l.name+"）"}
 function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/sites"),api("GET","/api/devices"),api("GET","/api/lines")]).then(([a,s,d,lines])=>{
   DATA.actions=a;DATA.sites=s;DATA.devices=d;DATA.lines=lines;
   $("acttb").innerHTML=a.length?a.map(x=>`<tr>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
       <span class="device-host">${esc(x.site_name?x.site_name+" · ":"")}${esc(x.protocol||"")}://${esc(x.host||"")}</span></div></td>
-    <td>${x.target_line?`<span class="tag ok">${esc(x.target_line)}</span>`:'<span class="tag gray">未指定</span>'}</td>
+    <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
+      if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
+      return arr.length?arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}" style="margin:0 4px 2px 0">${i+1}.${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(''):'<span class="tag gray">未指定</span>'})()}</td>
     <td><span class="tag ${x.match_type=="regex"?"":"info"}" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text">${esc(x.match_keywords)||'-'}</span></td>
     <td>${x.cooldown||"全局"}</td>
     <td><div class="ops-cell">
@@ -2511,76 +2579,111 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
       <button class="btn btn-sm btn-secondary" onclick="editAction(${x.id})">编辑</button>
       <button class="btn btn-sm btn-secondary" onclick="copyAction(${x.id})">复制</button>
       <button class="btn btn-sm btn-danger" onclick="delAction(${x.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无动作</div></td></tr>';
+    '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无切换规则</div></td></tr>';
   renderCoverage()})}
 function fillSelect(sel,list,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
   list.map(x=>`<option value="${x.id}">${esc(labelFirst?x.name:x.name+(x.host?" ("+x.host+")":""))}</option>`).join("")}
-function lineOptions(ls,excludeId){return ls.filter(l=>l.id!=excludeId)
-  .map(l=>`<option value="${l.id}">${esc(l.name)}${l.enabled?"":"（停用）"}</option>`).join("")}
+let TGT=[];
+function siteLineList(){const sid=+$("a_site").value||0;return sid?DATA.lines.filter(l=>l.site_id==sid):[]}
+function addTarget(lineId){const l=DATA.lines.find(x=>String(x.id)===String(lineId))||{};
+  TGT.push({line:l.name||"",command_block:"",verify_block:"display ip routing-table",
+            expect_keywords:l.nexthop_ip||"",nexthop:l.nexthop_ip||"",_lineId:l.id||""});
+  renderTargets()}
+function removeTarget(i){TGT.splice(i,1);renderTargets()}
+function moveTarget(i,d){const j=i+d;if(j<0||j>=TGT.length)return;
+  const t=TGT[i];TGT[i]=TGT[j];TGT[j]=t;renderTargets()}
+function readTargetInputs(){TGT.forEach((t,i)=>{const g=document.querySelector('#tgt_box [data-i="'+i+'"]');if(!g)return;
+  t.command_block=g.querySelector(".t_cmd").value;
+  t.verify_block=g.querySelector(".t_verify").value;
+  t.expect_keywords=g.querySelector(".t_expect").value})}
+function usedLineIds(except){return TGT.filter((t,i)=>i!==except&&t._lineId).map(t=>t._lineId)}
+function renderTargets(skipRead){if(!skipRead)readTargetInputs();
+  const box=$("tgt_box");const ls=siteLineList();
+  if(!ls.length){box.innerHTML='<div style="font-size:12px;color:var(--text-faint)">该站点未维护线路：请到「资源管理 → 站点管理 → 线路」添加后，即可为每条目标线路配置切换命令</div>';return}
+  box.innerHTML=TGT.map((t,i)=>{
+    const used=usedLineIds(i);
+    const opts=ls.filter(l=>!used.includes(l.id)||String(l.id)===String(t._lineId))
+      .map(l=>`<option value="${l.id}" ${String(l.id)===String(t._lineId)?"selected":""}>${esc(l.name)}${l.enabled?"":"（停用）"}</option>`).join("");
+    return `<div data-i="${i}" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:#f8fafc">
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+        <span style="font-size:12px;font-weight:600;color:var(--primary);background:var(--primary-bg);border-radius:12px;padding:2px 10px">优先级 ${i+1}</span>
+        <select style="width:200px" onchange="targetLineChange(${i},this.value)">${opts}</select>
+        <span style="font-size:12px;color:var(--text-muted)">${t.nexthop?("下一跳 "+esc(t.nexthop)):"（未配下一跳IP）"}</span>
+        <span style="flex:1"></span>
+        <button class="btn btn-sm btn-secondary" style="padding:2px 8px" ${i===0?"disabled":""} onclick="moveTarget(${i},-1)" title="上移（更优先）">↑</button>
+        <button class="btn btn-sm btn-secondary" style="padding:2px 8px" ${i===TGT.length-1?"disabled":""} onclick="moveTarget(${i},1)" title="下移（更靠后）">↓</button>
+        <button class="btn btn-sm btn-danger" style="padding:2px 8px" onclick="removeTarget(${i})">✕</button>
+      </div>
+      <label style="font-size:12px">切换命令块（每行一条，# 注释）</label>
+      <textarea class="t_cmd" rows="5" placeholder="bgp 65000&#10; undo peer x.x.x.x&#10; peer y.y.y.y enable">${esc(t.command_block)}</textarea>
+      <div class="grid2" style="margin-top:6px">
+        <div><label style="font-size:12px">验证命令（可选）</label><input class="t_verify" value="${esc(t.verify_block)}"></div>
+        <div><label style="font-size:12px">期望关键词（默认取下一跳IP）</label><input class="t_expect" value="${esc(t.expect_keywords)}"></div>
+      </div></div>`}).join("")}
+function targetLineChange(i,val){readTargetInputs();
+  const l=DATA.lines.find(x=>String(x.id)===String(val));if(!l)return;
+  TGT[i]._lineId=l.id;TGT[i].line=l.name;TGT[i].nexthop=l.nexthop_ip||"";
+  if(!(TGT[i].expect_keywords||"").trim())TGT[i].expect_keywords=l.nexthop_ip||"";
+  renderTargets()}
 function refreshActionLines(){const sid=+$("a_site").value||0;
   const ls=sid?DATA.lines.filter(l=>l.site_id==sid):[];
   $("a_line").innerHTML=!sid?`<option value="">(请先选择所属站点)</option>`:
-    `<option value="">${ls.length?"(选择匹配线路自动填关键词)":"(该站点未维护线路，手动输入关键词)"}</option>`+
-    lineOptions(ls,null)+(ls.length?`<option value="__custom">自定义（手动输入关键词）</option>`:"");
-  refreshActionTLines()}
-function refreshActionTLines(){const sid=+$("a_site").value||0;
-  const ls=sid?DATA.lines.filter(l=>l.site_id==sid):[];
-  const mv=$("a_line").value,mid=mv&&mv!="__custom"?+mv:0;
-  $("a_tline").innerHTML=!sid?`<option value="">(请先选择所属站点)</option>`:
-    `<option value="">${ls.length?"(选择目标线路自动填期望关键词)":"(该站点未维护线路，手动输入期望关键词)"}</option>`+
-    lineOptions(ls,mid)+(ls.length?`<option value="__custom">自定义（手动输入）</option>`:"")}
-function onActionSiteChange(){refreshActionLines();$("a_line").value="";$("a_tline").value="";
-  $("a_kw").readOnly=false;$("a_expect").readOnly=false;
-  $("a_kw").value="";$("a_target").value="";$("a_expect").value=""}
-function onActionLineChange(){const v=$("a_line").value;refreshActionTLines();
+    `<option value="">${ls.length?"(选择故障线路自动填关键词)":"(该站点未维护线路，手动输入关键词)"}</option>`+
+    ls.map(l=>`<option value="${l.id}">${esc(l.name)}${l.enabled?"":"（停用）"}</option>`).join("")+
+    (ls.length?`<option value="__custom">自定义（手动输入关键词）</option>`:"")}
+function onActionSiteChange(){refreshActionLines();$("a_line").value="";
+  $("a_kw").readOnly=false;$("a_kw").value="";
+  readTargetInputs();TGT=[];renderTargets()}
+function onActionLineChange(){const v=$("a_line").value;
   if(!v||v=="__custom"){$("a_kw").readOnly=false;return}
-  const l=DATA.lines.find(x=>x.id==v);if(!l)return;
+  const l=DATA.lines.find(x=>String(x.id)===String(v));if(!l)return;
   $("a_kw").value=l.alarm_keywords||"";$("a_kw").readOnly=!!(l.alarm_keywords||"").trim()}
-function onActionTLineChange(){const v=$("a_tline").value;
-  if(!v||v=="__custom"){$("a_expect").readOnly=false;$("a_target").value="";return}
-  const l=DATA.lines.find(x=>x.id==v);if(!l)return;
-  $("a_target").value=l.name||"";$("a_expect").value=l.nexthop_ip||"";
-  $("a_expect").readOnly=!!(l.nexthop_ip||"").trim()}
+function targetsFromAction(a){
+  const arr=(a.targets_json||"").trim()?JSON.parse(a.targets_json):null;
+  if(arr&&arr.length)return arr.map(x=>({...x,_lineId:(DATA.lines.find(l=>l.site_id==a.site_id&&l.name===x.line)||{}).id||""}));
+  if((a.target_line||"").trim()){
+    const l=DATA.lines.find(x=>x.site_id==a.site_id&&x.name===a.target_line.trim())||{};
+    return [{line:a.target_line.trim(),command_block:a.command_block||"",verify_block:a.verify_block||"",
+             expect_keywords:a.expect_keywords||"",nexthop:l.nexthop_ip||"",_lineId:l.id||""}]}
+  return []}
 function editAction(id){const a=DATA.actions.find(x=>x.id==id)||{};
   fillSelect("a_site",DATA.sites);fillSelect("a_device",DATA.devices);
   $("a_id").value=a.id||"";$("a_name").value=a.name||"";$("a_site").value=a.site_id||"";
   $("a_device").value=a.device_id||"";$("a_mtype").value=a.match_type||"contains";
   refreshActionLines();
-  let pre="",tpre="";
+  let pre="";
   if(a.site_id){const kw=(a.match_keywords||"").trim();
     if(kw){const cands=DATA.lines.filter(l=>l.site_id==a.site_id&&(l.alarm_keywords||"").trim()==kw);
-      if(cands.length==1)pre=String(cands[0].id)}
-    const tn=(a.target_line||"").trim();
-    if(tn){const tc=DATA.lines.filter(l=>l.site_id==a.site_id&&l.name==tn&&String(l.id)!=pre);
-      if(tc.length==1)tpre=String(tc[0].id)}}
-  $("a_line").value=pre;refreshActionTLines();$("a_tline").value=tpre;
-  const ml=pre?DATA.lines.find(x=>x.id==pre):null;
-  const tl=tpre?DATA.lines.find(x=>x.id==tpre):null;
+      if(cands.length==1)pre=String(cands[0].id)}}
+  $("a_line").value=pre;
+  const ml=pre?DATA.lines.find(x=>String(x.id)===pre):null;
   if(ml&&ml.alarm_keywords){$("a_kw").value=ml.alarm_keywords;$("a_kw").readOnly=true}
   else{$("a_kw").value=a.match_keywords||"";$("a_kw").readOnly=false}
-  if(tl){$("a_target").value=tl.name||"";$("a_expect").value=tl.nexthop_ip||"";$("a_expect").readOnly=true}
-  else{$("a_target").value=a.target_line||"";$("a_expect").value=a.expect_keywords||"";$("a_expect").readOnly=false}
-  $("a_cmd").value=a.command_block||"";$("a_cmd").placeholder="";
-  $("a_cmd_hint").style.display="none";
-  $("a_rb").value=a.rollback_block||"";$("a_verify").value=a.verify_block||"";
+  try{TGT=a.id?targetsFromAction(a):[]}catch(e){TGT=[]}
+  $("a_rb").value=a.rollback_block||"";
   $("a_cd").value=a.cooldown||0;$("a_en").checked=!!a.enabled||!a.id;
-  $("mActTitle").textContent=a.id?"编辑动作 #"+a.id:"新建动作";$("mAct").classList.add("show")}
-function saveAction(){const b={id:$("a_id").value||null,name:$("a_name").value.trim(),
+  renderTargets(true);
+  $("mActTitle").textContent=a.id?"编辑规则 #"+a.id:"新建切换规则";$("mAct").classList.add("show")}
+function saveAction(){readTargetInputs();
+  const b={id:$("a_id").value||null,name:$("a_name").value.trim(),
   site_id:$("a_site").value?+$("a_site").value:null,device_id:+$("a_device").value||null,
   match_type:$("a_mtype").value,match_keywords:$("a_kw").value.trim(),
-  command_block:$("a_cmd").value,rollback_block:$("a_rb").value,
-  verify_block:$("a_verify").value,expect_keywords:$("a_expect").value.trim(),
-  target_line:$("a_target").value.trim(),
-  cooldown:+$("a_cd").value||0,enabled:$("a_en").checked?1:0};
+  rollback_block:$("a_rb").value,cooldown:+$("a_cd").value||0,enabled:$("a_en").checked?1:0};
+  const ts=TGT.filter(t=>t.line);
+  if(!b.name||!b.device_id){showToast("规则名、目标设备必填",1);return}
+  if(!ts.length){showToast("请至少添加一个目标线路（降级阶梯）",1);return}
+  if(ts.some(t=>!(t.command_block||"").trim())){showToast("每个目标线路都必须填写切换命令块",1);return}
+  b.targets_json=JSON.stringify(ts.map(t=>({line:t.line,command_block:t.command_block,
+    verify_block:t.verify_block,expect_keywords:t.expect_keywords,nexthop:t.nexthop})));
+  b.target_line=ts[0].line;b.command_block=ts[0].command_block;
+  b.verify_block=ts[0].verify_block;b.expect_keywords=ts[0].expect_keywords;
   const siteHasLines=b.site_id&&DATA.lines.some(l=>l.site_id==b.site_id);
-  if(!b.name||!b.device_id){showToast("动作名、目标设备必填",1);return}
-  if(!b.target_line){showToast("请选择目标线路（切换后要生效的线路）",1);return}
   if(!siteHasLines&&!b.match_keywords){showToast("站点未维护线路时，匹配关键词必填",1);return}
   api(b.id?"PUT":"POST",b.id?"/api/actions/"+b.id:"/api/actions",b).then(()=>{
-    closeM("mAct");showToast("动作已保存");loadActions()})}
+    closeM("mAct");showToast("切换规则已保存");loadActions()})}
 function copyAction(id){const a=DATA.actions.find(x=>x.id==id);if(!a)return;
-  editAction(id);$("a_id").value="";$("a_name").value=(a.name||"动作")+"-副本";
-  $("mActTitle").textContent="复制动作 #"+id}
+  editAction(id);$("a_id").value="";$("a_name").value=(a.name||"规则")+"-副本";
+  $("mActTitle").textContent="复制规则 #"+id}
 function delAction(id){if(confirm("确认删除动作 #"+id+"？"))api("DELETE","/api/actions/"+id).then(()=>{showToast("已删除");loadActions()})}
 function execAction(id,dry){if(dry===false&&id===0)return;
   const q=dry?"?dry_run=1":"";
@@ -2714,7 +2817,7 @@ function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:
 
 // ---- 匹配预检 / 回放 ----
 const _STEP_TXT={fault:"故障线路，排除",active:"有活跃告警，不可选",clear:"无活跃告警，可选",
-  no_action:"无活跃告警，但缺切换动作",no_keyword:"未配告警关键字",query_error:"查询失败",
+  no_cmd:"健康但未配本方向切换命令",no_action:"无活跃告警，但缺切换动作",no_keyword:"未配告警关键字",query_error:"查询失败",
   legacy:"站点未配线路，走动作匹配"};
 function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
   api("POST","/api/match/test",{title:t}).then(r=>{
@@ -2722,15 +2825,15 @@ function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
     let h="";
     if(p&&p.error){h+=`<div class="hit-bad">降级预演失败：${esc(p.error)}</div>`}
     else if(p&&p.matched){
-      const st=s=>`<span class="tag ${s.status=="clear"?"ok":(s.status=="fault"?"gray":(s.status=="active"?"bad":"warn"))}">${esc(_STEP_TXT[s.status]||s.status)}</span>`;
+      const st=s=>`<span class="tag ${s.status=="clear"?"ok":(s.status=="fault"?"gray":(s.status=="active"||s.status=="no_cmd"?"bad":"warn"))}">${esc(_STEP_TXT[s.status]||s.status)}</span>`;
       h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">
         <div style="font-weight:600;margin-bottom:8px">降级预演：站点 ${esc(p.site||"-")} · 故障线路 ${esc((p.fault_lines||[]).join("、")||"-")}</div>
         ${(p.steps||[]).map(s=>`<div style="display:flex;gap:10px;align-items:center;padding:3px 0;font-size:13px">
-          <span style="width:150px">${esc(s.line)}${s.priority!=null?`（priority ${s.priority}）`:""}</span>
-          <span style="color:var(--text-muted);flex:1">${s.status=="active"||s.status=="clear"||s.status=="no_action"?`未处理 ${s.pending} / 处理中 ${s.handling}`:""}</span>
+          <span style="width:200px">${esc(s.line)}${s.action?`<span style="color:var(--text-faint);font-size:12px">（规则:${esc(s.action)}）</span>`:""}</span>
+          <span style="color:var(--text-muted);flex:1">${s.status=="active"||s.status=="clear"||s.status=="no_cmd"?`未处理 ${s.pending} / 处理中 ${s.handling}`:""}</span>
           ${st(s)}</div>`).join("")}
         <div style="margin-top:8px;font-size:13px">${p.allow
-          ? `<span class="tag ok">将执行切换</span> 目标线路 <b>${esc(p.target_line||"")}</b> → 动作「${esc(p.action_name||"")}」`
+          ? `<span class="tag ok">将执行切换</span> 规则「${esc(p.action_name||"")}」→ 目标线路 <b>${esc(p.target_line||"")}</b>`
           : `<span class="tag bad">不会切换</span> ${esc(p.reason||"")}`}</div>
       </div>`}
     if(r.hits&&r.hits.length){h+=r.hits.map(x=>`<div class="hit-ok">命中动作 <b>${esc(x.action_name)}</b>（站点 ${esc(x.site||"-")} / 设备 ${esc(x.device?x.device.name:"-")} / ${x.command_lines} 条命令）</div>`).join("")}
