@@ -1100,7 +1100,7 @@ def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
             except Exception:
                 pass
     tl = list(init_tl or [])
-    mode = "演练" if dry_run else ("回切" if rollback else "切换")
+    mode = "演练" if dry_run else "切换"
     tl.append({"ts": now(), "kind": "info",
                "text": "任务入队（模式：%s，设备：%s）" % (mode, dev["name"])})
     cur = conn.execute(
@@ -1774,7 +1774,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .tag.gray{background:#f1f5f9;color:#64748b}
 .keyword-text{color:#334155;line-height:1.5;max-width:400px;display:inline-block;word-break:break-all}
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
-.err-text{color:var(--danger);font-size:12px;line-height:1.6;word-break:break-word}
+.err-text{color:#b91c1c;font-size:12px;line-height:1.6;word-break:break-word}
 
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
@@ -2074,8 +2074,7 @@ details summary:hover{color:var(--primary)}
   <input id="a_kw" placeholder="如：站点A,4G  或正则  站点A.*4G">
   <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" data-tip="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
   <textarea id="a_cmd" rows="10"></textarea>
-  <label>回切命令块（可选，手动触发用）</label>
-  <textarea id="a_rb" rows="5"></textarea>
+  <textarea id="a_rb" style="display:none"></textarea>
   <label>验证命令块（可选，切换完成后重新登录执行并检查期望内容）</label>
   <textarea id="a_verify" rows="2" placeholder="display ip routing-table"></textarea>
   <div class="grid2">
@@ -2263,7 +2262,7 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td><span class="tag ${l.trigger=="api"?"info":"gray"}">${l.trigger=="api"?"API":"手动"}</span></td>
     <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="keyword-text" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
     <td style="overflow:hidden"><b>${esc(l.action_name)}</b></td><td style="overflow:hidden">${esc(l.device_name)}</td>
-    <td>${l.dry_run?"演练":(l.rollback?"回切":"切换")}</td>
+    <td>${l.dry_run?"演练":"切换"}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
     <td style="overflow:hidden"><span class="err-text">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
@@ -2310,8 +2309,8 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
     <td><div class="ops-cell">
       <button class="btn btn-sm btn-primary" onclick="execAction(${x.id})">执行</button>
       <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id},true)">演练</button>
-      <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id},false,true)">回切</button>
       <button class="btn btn-sm btn-secondary" onclick="editAction(${x.id})">编辑</button>
+      <button class="btn btn-sm btn-secondary" onclick="copyAction(${x.id})">复制</button>
       <button class="btn btn-sm btn-danger" onclick="delAction(${x.id})">删除</button></div></td></tr>`).join(""):
     '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无动作</div></td></tr>'})}
 function fillSelect(sel,list,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
@@ -2335,9 +2334,12 @@ function saveAction(){const b={id:$("a_id").value||null,name:$("a_name").value.t
   if(!b.name||!b.device_id||!b.match_keywords){showToast("动作名、设备、匹配关键词必填",1);return}
   api(b.id?"PUT":"POST",b.id?"/api/actions/"+b.id:"/api/actions",b).then(()=>{
     closeM("mAct");showToast("动作已保存");loadActions()})}
+function copyAction(id){const a=DATA.actions.find(x=>x.id==id);if(!a)return;
+  editAction(id);$("a_id").value="";$("a_name").value=(a.name||"动作")+"-副本";
+  $("mActTitle").textContent="复制动作 #"+id}
 function delAction(id){if(confirm("确认删除动作 #"+id+"？"))api("DELETE","/api/actions/"+id).then(()=>{showToast("已删除");loadActions()})}
-function execAction(id,dry,rb){if(dry===false&&id===0)return;
-  const q=dry?"?dry_run=1":(rb?"?rollback=1":"");
+function execAction(id,dry){if(dry===false&&id===0)return;
+  const q=dry?"?dry_run=1":"";
   api("POST","/api/exec/"+id+q,{}).then(r=>{
     showToast(r.executed?("已提交执行（任务 #"+r.task_id+"）"):("未执行："+r.skip_reason),!r.executed);
     loadLogs()}).catch(e=>showToast("提交失败: "+e.message,1))}
