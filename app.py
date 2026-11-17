@@ -1787,8 +1787,11 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .input-group .btn{border-radius:0 6px 6px 0;padding:0 24px}
 .action-buttons{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .action-buttons select{padding:9px 12px;border:1px solid var(--border2);border-radius:6px;font-size:13px;outline:none;background:#fff;width:auto}
-.q{display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #b6c2d4;color:#64748b;font-size:10px;font-weight:700;cursor:help;margin-left:7px;vertical-align:middle;flex-shrink:0;line-height:1}
+.q{position:relative;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #b6c2d4;color:#64748b;font-size:10px;font-weight:700;cursor:help;margin-left:7px;vertical-align:middle;flex-shrink:0;line-height:1}
 .q:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-bg)}
+.q::after{content:attr(data-tip);position:absolute;left:50%;transform:translateX(-50%);top:calc(100% + 7px);background:#0f172a;color:#e2e8f0;font-size:12px;font-weight:400;line-height:1.65;padding:8px 12px;border-radius:6px;white-space:pre-line;width:max-content;max-width:340px;box-shadow:0 6px 20px rgba(15,23,42,.28);opacity:0;visibility:hidden;transition:opacity .12s;pointer-events:none;z-index:400}
+.q::before{content:"";position:absolute;left:50%;transform:translateX(-50%);top:calc(100% - 3px);border:5px solid transparent;border-bottom-color:#0f172a;opacity:0;visibility:hidden;transition:opacity .12s;z-index:401}
+.q:hover::after,.q:hover::before{opacity:1;visibility:visible}
 
 /* ============ 弹窗 ============ */
 .modal{position:fixed;inset:0;background:rgba(15,23,42,.55);display:none;align-items:flex-start;justify-content:center;z-index:100;overflow:auto;padding:48px 16px}
@@ -1933,7 +1936,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid" id="stat"></div>
     <div class="card">
-      <div class="card-header"><h3>执行记录<span class="q" title="点击任意行查看每条命令回显与会话原文；列表每 30 秒自动刷新">?</span></h3></div>
+      <div class="card-header"><h3>执行记录<span class="q" data-tip="点击任意行查看每条命令回显与会话原文；列表每 30 秒自动刷新">?</span></h3></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:70px">ID</th><th style="width:160px">时间</th><th style="width:80px">触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th style="width:70px">模式</th><th style="width:110px">状态</th><th>错误</th></tr></thead>
@@ -1944,7 +1947,7 @@ details summary:hover{color:var(--primary)}
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
     <div class="card">
-      <div class="card-header"><h3>匹配预检<span class="q" title="确认「告警标题 ↔ 站点 / 线路」对应关系是否正确">?</span></h3></div>
+      <div class="card-header"><h3>匹配预检<span class="q" data-tip="确认「告警标题 ↔ 站点 / 线路」对应关系是否正确">?</span></h3></div>
       <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
         <div class="toolbar-row">
           <div class="input-group">
@@ -1961,7 +1964,7 @@ details summary:hover{color:var(--primary)}
       </div>
     </div>
     <div class="card">
-      <div class="card-header"><h3>切换动作规则<span class="q" title="告警标题 → 动作匹配：包含模式填逗号分隔关键词（全部包含才命中，如 站点A,4G）；正则模式填单个正则。&#10;命令块中 # 开头行为注释，执行时自动跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
+      <div class="card-header"><h3>切换动作规则<span class="q" data-tip="告警标题 → 动作匹配：包含模式填逗号分隔关键词（全部包含才命中，如 站点A,4G）；正则模式填单个正则。&#10;命令块中 # 开头行为注释，执行时自动跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">动作名 / 设备</th><th style="width:90px">匹配方式</th>
         <th>关键词 / 正则</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
@@ -1984,7 +1987,7 @@ details summary:hover{color:var(--primary)}
   <!-- 站点管理 -->
   <div class="page-view" id="p-sites">
     <div class="card">
-      <div class="card-header"><h3>站点管理<span class="q" title="线路关键词用于判定「故障线路」与「多条线路同时告警」">?</span></h3><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
+      <div class="card-header"><h3>站点管理<span class="q" data-tip="线路关键词用于判定「故障线路」与「多条线路同时告警」">?</span></h3><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:220px">站点名称</th><th>线路</th><th style="width:220px">备注</th><th style="width:220px;text-align:right">操作</th></tr></thead>
       <tbody id="sitetb"></tbody></table></div>
@@ -1994,14 +1997,14 @@ details summary:hover{color:var(--primary)}
   <!-- 全局设置 -->
   <div class="page-view" id="p-settings">
     <div class="card">
-      <div class="card-header"><h3>全局设置<span class="q" title="告警回调接口：POST /api/alert&#10;Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;响应含 matched / task_id / skip_reason">?</span></h3></div>
+      <div class="card-header"><h3>全局设置<span class="q" data-tip="告警回调接口：POST /api/alert&#10;Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;响应含 matched / task_id / skip_reason">?</span></h3></div>
       <div class="card-body">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
-        <div class="kv"><label>API Token<span class="q" title="AIOps 回调时带 X-API-Token 请求头">?</span></label><div class="ctl"><input id="s_token"></div></div>
+        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调时带 X-API-Token 请求头">?</span></label><div class="ctl"><input id="s_token"></div></div>
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
         <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放/互斥判定）"></div></div>
-        <div class="kv"><label>活跃告警判定窗口(分钟)<span class="q" title="收到告警时，查近 N 分钟内未恢复的告警，判断其它线路是否也异常">?</span></label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:220px"></div></div>
+        <div class="kv"><label>活跃告警判定窗口(分钟)<span class="q" data-tip="收到告警时，查近 N 分钟内未恢复的告警，判断其它线路是否也异常">?</span></label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:220px"></div></div>
         <button class="btn btn-primary" onclick="saveCfg()">保存设置</button>
       </div>
     </div>
@@ -2045,7 +2048,7 @@ details summary:hover{color:var(--primary)}
   </div>
   <label>匹配关键词 / 正则（包含模式逗号分隔多个，全部包含才命中）*</label>
   <input id="a_kw" placeholder="如：站点A,4G  或正则  站点A.*4G">
-  <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" title="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
+  <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" data-tip="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
   <textarea id="a_cmd" rows="10"></textarea>
   <label>回切命令块（可选，手动触发用）</label>
   <textarea id="a_rb" rows="5"></textarea>
@@ -2125,10 +2128,10 @@ details summary:hover{color:var(--primary)}
 
 <!-- 站点线路 -->
 <div class="modal" id="mLine"><div class="box" style="width:780px">
-  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" title="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断是否多条线路同时告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护）。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
+  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" data-tip="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断是否多条线路同时告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护）。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
-  <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" title="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">优先级</th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
+  <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" data-tip="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">优先级</th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
   <tbody id="ltb"></tbody></table></div>
   <div class="grid2" style="margin-top:14px">
     <div><label>线路名</label><input id="l_name" placeholder="如 Airtel"></div>
