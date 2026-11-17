@@ -1521,6 +1521,9 @@ class Handler(BaseHTTPRequestHandler):
                 cfg = {k: kv_get(conn, k) for k in keys}
                 cfg["web_password"] = mask_pw(cfg["web_password"])
                 cfg["aiops_token"] = mask_pw(cfg["aiops_token"])
+                _t = cfg["api_token"] or ""
+                cfg["api_token_masked"] = (_t[:7] + "****" + _t[-4:]) if len(_t) > 12 else ("******" if _t else "")
+                cfg["api_token"] = ""
                 return self._send_json(cfg)
             if path == "/api/stats":
                 total = conn.execute("SELECT COUNT(*) c FROM exec_logs").fetchone()["c"]
@@ -2052,7 +2055,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .top-nav button:hover{color:#fff;background:rgba(255,255,255,.06)}
 .top-nav button.active{color:#fff;font-weight:600;background:var(--sidebar-active-bg)}
 .header-actions{margin-left:auto;display:flex;align-items:center;gap:14px}
-.ver-top{font-size:11px;color:#64748b;white-space:nowrap}
+.ver-top{font-size:11px;color:#8b98ab;white-space:nowrap}
 .btn-logout{display:flex;align-items:center;gap:6px;padding:7px 14px;background:transparent;color:var(--sidebar-text);border:1px solid rgba(255,255,255,.12);border-radius:6px;font-size:12px;cursor:pointer;transition:all .2s;white-space:nowrap}
 .btn-logout:hover{background:rgba(239,68,68,.12);color:var(--danger);border-color:rgba(239,68,68,.25)}
 
@@ -2060,7 +2063,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .app-row{flex:1;display:flex;min-height:0;overflow:hidden}
 .sidebar{width:196px;background:var(--bg-card);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
 .side-nav{padding:16px 12px}
-.side-title{color:var(--text-faint);font-size:11px;font-weight:600;margin-bottom:10px;padding-left:10px;letter-spacing:1px}
+.side-title{color:var(--text-muted);font-size:11px;font-weight:600;margin-bottom:10px;padding-left:10px;letter-spacing:1px}
 .nav-item{display:flex;align-items:center;padding:9px 12px;color:#475569;font-size:13px;border-radius:6px;margin-bottom:4px;transition:all .2s;cursor:pointer;border:none;background:none;width:100%;text-align:left}
 .nav-item svg{margin-right:10px;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
 .nav-item:hover{color:var(--text-main);background:#f1f5f9}
@@ -2137,7 +2140,13 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
 .stat-grid.stat-6{grid-template-columns:repeat(6,1fr)}
-.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:18px 20px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.02)}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:18px 20px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.02);cursor:pointer;transition:all .2s}
+.stat-card:hover{border-color:var(--border2);box-shadow:0 2px 8px rgba(15,23,42,.06)}
+.stat-card.on{border-color:var(--primary);box-shadow:0 0 0 2px var(--primary-bg)}
+tr.row-off td{opacity:.55}
+tr.row-off td .tag{filter:saturate(.4)}
+.btn:focus-visible,.nav-item:focus-visible,input:focus-visible,select:focus-visible,tr.clickable:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
 .stat-ic{width:42px;height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .stat-ic svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .stat-card b{font-size:24px;font-weight:700;display:block;line-height:1.2;font-variant-numeric:tabular-nums}
@@ -2171,7 +2180,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .input-group .btn{border-radius:0 6px 6px 0;padding:0 24px}
 .action-buttons{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
 .action-buttons select{padding:9px 12px;border:1px solid var(--border2);border-radius:6px;font-size:13px;outline:none;background:#fff;width:auto}
-.q{position:relative;display:inline-flex;align-items:center;justify-content:center;width:15px;height:15px;border-radius:50%;border:1px solid #b6c2d4;color:#64748b;font-size:10px;font-weight:700;cursor:help;margin-left:7px;vertical-align:middle;flex-shrink:0;line-height:1}
+.q{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;border:1px solid #94a3b8;color:#64748b;font-size:11px;font-weight:700;cursor:help;margin-left:7px;vertical-align:middle;flex-shrink:0;line-height:1}
 .q:hover{border-color:var(--primary);color:var(--primary);background:var(--primary-bg)}
 .qtip{position:fixed;background:#0f172a;color:#e2e8f0;font-size:12px;font-weight:400;line-height:1.65;padding:8px 12px;border-radius:6px;white-space:pre-line;width:max-content;max-width:320px;box-shadow:0 6px 20px rgba(15,23,42,.28);pointer-events:none;z-index:500;display:none}
 .qtip.show{display:block}
@@ -2182,7 +2191,7 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .modal.show{display:flex;animation:fadeIn .18s ease}
 .modal .box{background:#fff;border-radius:10px;width:780px;max-width:100%;box-shadow:0 24px 60px rgba(15,23,42,.35);animation:rise .22s cubic-bezier(.2,.9,.3,1.15)}
 @keyframes rise{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
-.mhd{display:flex;align-items:center;padding:18px 24px;border-bottom:1px solid var(--border);gap:10px}
+.mhd{display:flex;align-items:center;padding:18px 24px;border-bottom:1px solid var(--border);gap:12px}
 .mhd h3{font-size:15px;font-weight:600;flex:1}
 .mx{border:none;background:#f1f5f9;color:#64748b;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .2s}
 .mx:hover{background:var(--danger-bg);color:var(--danger)}
@@ -2327,11 +2336,11 @@ details summary:hover{color:var(--primary)}
       <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
         <div class="toolbar-row">
           <div class="input-group">
-            <input id="mt_title" placeholder="输入告警标题，如 【ICMP中断】41.243.21.170-华刚卢本-Airtel" onkeydown="if(event.key=='Enter')matchTest()">
+            <input id="mt_title" placeholder="输入告警标题，如 【ICMP丢包】拉米卡专线-Airtel专线（刚果金地址）" onkeydown="if(event.key=='Enter')matchTest()">
             <button class="btn btn-primary" onclick="matchTest()">检测规则</button>
           </div>
         </div>
-        <div id="mt_out"></div>
+        <div id="mt_out"><div class="empty" style="padding:28px 24px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>粘贴一条真实告警标题，校验它会命中哪条规则、降级预演会选中哪个目标线路<br><span style="font-size:12px">也可用下方「回放」以近几天真实告警批量检验规则覆盖</span></div></div>
         <div class="action-buttons" style="border-top:1px dashed var(--border);padding-top:16px">
           <select id="rp_days"><option value="1">近 1 天</option><option value="7" selected>近 7 天</option><option value="14">近 14 天</option><option value="30">近 30 天</option></select>
           <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" data-tip="以真实告警校验规则覆盖情况；未命中标题用于补充关键词">?</span></button>
@@ -2384,11 +2393,11 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-body">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
-        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}">?</span></label><div class="ctl"><input id="s_token"></div></div>
+        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认掩码显示；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap"></span></div></div>
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
         <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改"></div></div>
-        <button class="btn btn-primary" onclick="saveCfg()">保存设置</button>
+        <div style="display:flex;justify-content:flex-end"><button class="btn btn-primary" onclick="saveCfg()">保存设置</button></div>
       </div>
     </div>
   </div>
@@ -2604,24 +2613,27 @@ const STAT=[
  ["running","执行中","#f59e0b","#fef3c7",'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
  ["skipped","条件不满足","#64748b","#e2e8f0",'<path d="M5 12h14"/><path d="M13 5l7 7-7 7"/>'],
  ["verify_failed","验证未过","#f97316","#ffedd5",'<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>']];
+let LOG_FILTER="";
 function loadStats(){api("GET","/api/stats").then(s=>{
   $("ver").textContent=s.version;
-  $("stat").innerHTML=STAT.map(x=>`<div class="stat-card">
+  $("stat").innerHTML=STAT.map(x=>`<div class="stat-card${LOG_FILTER===(x[0]=='total'?'':x[0])?" on":""}" title="点击筛选该状态" onclick="setLogFilter('${x[0]=='total'?'':x[0]}')">
     <div class="stat-ic" style="background:${x[3]};color:${x[2]}"><svg viewBox="0 0 24 24">${x[4]}</svg></div>
     <div><b>${s[x[0]]}</b><span>${x[1]}</span></div></div>`).join("")})}
+function setLogFilter(st){LOG_FILTER=(LOG_FILTER===st?"":st);loadStats();loadLogs()}
 const ST_TAG={success:["成功","ok"],failed:["失败","bad"],running:["执行中","info"],cooldown_skip:["冷却跳过","gray"],
   verify_failed:["验证未过","warn"],skipped:["条件不满足","gray"],cooldown:["冷却中","warn"]};
 function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
+  if(LOG_FILTER)ls=ls.filter(l=>l.status===LOG_FILTER);
   $("logtb").innerHTML=ls.length?ls.map(l=>{const st=ST_TAG[l.status]||[esc(l.status),"gray"];
-    return `<tr class="clickable" onclick="showLog(${l.id})">
+    return `<tr class="clickable" tabindex="0" onkeydown="if(event.key==='Enter')showLog(${l.id})" onclick="showLog(${l.id})">
     <td class="mono" style="color:var(--text-muted)">#${l.id}</td>
     <td class="mono cell1" style="color:var(--text-muted)">${esc(l.started_at)}</td>
     <td><span class="tag ${l.trigger=="api"?"info":"gray"}">${l.trigger=="api"?"API":"手动"}</span></td>
-    <td class="cell1"><span class="keyword-text">${esc(l.alarm_title)||"-"}</span></td>
-    <td class="cell1"><b>${esc(l.action_name)}</b></td><td class="cell1">${esc(l.device_name)}</td>
+    <td class="cell1"><span class="keyword-text" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
+    <td class="cell1"><b title="${esc(l.action_name)}">${esc(l.action_name)}</b></td><td class="cell1">${esc(l.device_name)}</td>
     <td class="cell1">${l.dry_run?"演练":"切换"}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
-    <td class="cell1"><span class="err-text">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
+    <td class="cell1"><span class="err-text" title="${esc(l.error)}">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
@@ -2696,17 +2708,17 @@ function newActionFor(siteId,lineId){
   $("mActTitle").textContent="新建切换规则（目标："+l.name+"）"}
 function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/sites"),api("GET","/api/devices"),api("GET","/api/lines")]).then(([a,s,d,lines])=>{
   DATA.actions=a;DATA.sites=s;DATA.devices=d;DATA.lines=lines;
-  $("acttb").innerHTML=a.length?a.map(x=>`<tr>
+  $("acttb").innerHTML=a.length?a.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
       <span class="device-host">${esc(x.site_name?x.site_name+" · ":"")}${esc(x.protocol||"")}://${esc(x.host||"")}</span></div></td>
     <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
       if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
-      return arr.length?arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}" style="margin:0 4px 2px 0">${i+1}.${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(''):'<span class="tag gray">未指定</span>'})()}</td>
+      return arr.length?arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}" style="margin:0 6px 2px 0"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(''):'<span class="tag gray">未指定</span>'})()}</td>
     <td><span class="tag ${x.match_type=="regex"?"":"info"}" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text">${esc(x.match_keywords)||'-'}</span></td>
     <td>${x.cooldown||"全局"}</td>
     <td><div class="ops-cell">
-      <button class="btn btn-sm btn-primary" onclick="execAction(${x.id})">执行</button>
+      <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id})">执行</button>
       <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id},true)">演练</button>
       <button class="btn btn-sm btn-secondary" onclick="editAction(${x.id})">编辑</button>
       <button class="btn btn-sm btn-secondary" onclick="copyAction(${x.id})">复制</button>
@@ -2825,25 +2837,31 @@ function execAction(id,dry){if(dry===false&&id===0)return;
     showToast(r.executed?("已提交执行（任务 #"+r.task_id+"）"):("未执行："+r.skip_reason),!r.executed);
     loadLogs()}).catch(e=>showToast("提交失败: "+e.message,1))};
   const tgs=x?actionTargets(x):[];
-  if(tgs.length>1){const names=tgs.map((t,i)=>(i+1)+"."+t.line+(t.command_block?'':'（缺命令）')).join("\n");
-    const pick=prompt("该规则含多个目标阶梯，选择本次手动执行的目标（输入序号，留空=第1目标）：\n"+names,"1");
+  const dev=x?(x.protocol||"")+"://"+(x.host||""):"";
+  if(tgs.length>1){
+    const names=tgs.map((t,i)=>(i+1)+". "+t.line+(t.command_block?"":"（缺命令，不可选）")).join("\n");
+    const pick=prompt("规则「"+x.name+"」设备 "+dev+"\n选择本次执行的目标线路（输入序号）：\n"+names,"1");
     if(pick===null)return;
     const n=parseInt(pick||"1",10);const t=tgs[n-1];
     if(!t)return showToast("无效序号",1);
+    if(!t.command_block)return showToast("该目标未配置切换命令",1);
+    if(!confirm("确认对 "+dev+" 真实下发目标「"+t.line+"」的切换命令？"))return;
     go(t.line);return}
+  const only=tgs[0]||{};
+  if(!dry&&!confirm("确认对 "+dev+" 真实下发目标「"+(only.line||"默认")+"」的切换命令？"))return;
   go("")}
 
 // ---- 设备 ----
 function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
-  $("devtb").innerHTML=d.length?d.map(x=>`<tr>
+  $("devtb").innerHTML=d.length?d.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
       <span class="device-host mono">${esc(x.host)}:${x.port}</span></div></td>
     <td>${esc(x.site_name||"-")}</td><td><span class="tag ${x.protocol=="ssh"?"info":"gray"}">${x.protocol}</span></td>
     <td>${esc(x.username)}</td><td>${x.timeout}s</td>
     <td><div class="ops-cell">
-      <button class="btn btn-sm btn-success" onclick="testDeviceById(${x.id})">测试</button>
-      <button class="btn btn-sm btn-warning" onclick="testDeviceByIdStatus(${x.id})">查线路</button>
+      <button class="btn btn-sm btn-secondary" onclick="testDeviceById(${x.id})">测试</button>
+      <button class="btn btn-sm btn-secondary" onclick="testDeviceByIdStatus(${x.id})">查线路</button>
       <button class="btn btn-sm btn-secondary" onclick="editDevice(${x.id})">编辑</button>
       <button class="btn btn-sm btn-danger" onclick="delDevice(${x.id})">删除</button></div></td></tr>`).join(""):
     '<tr><td colspan=7><div class="empty"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/></svg>暂无设备</div></td></tr>'})}
@@ -2897,9 +2915,9 @@ function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines"
     return `<tr>
     <td><span class="device-name">${esc(x.name)}</span><div class="device-host mono">#${x.id}</div></td>
     <td>${ls.length?ls.map(l=>`<span class="tag ok" style="margin:0 6px 4px 0">${esc(l.name)}</span>`).join(""):'<span style="color:var(--text-faint)">未配置</span>'}</td>
-    <td style="color:var(--text-muted)">${esc(x.remark)}</td>
+    <td style="color:var(--text-muted);max-width:200px" class="cell1"><span title="${esc(x.remark)}">${esc(x.remark)||"-"}</span></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="editSite(${x.id})">编辑</button>
-    <button class="btn btn-sm btn-warning" onclick="manageLines(${x.id})">线路</button>
+    <button class="btn btn-sm btn-secondary" onclick="manageLines(${x.id})">线路</button>
     <button class="btn btn-sm btn-danger" onclick="delSite(${x.id})">删除</button></div></td></tr>`}).join(""):
     '<tr><td colspan=4><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>暂无站点</div></td></tr>'})}
 function editSite(id){const s=DATA.sites.find(x=>x.id==id)||{};
@@ -2934,11 +2952,13 @@ function delLine(id){if(!confirm("删除该线路？"))return;
 
 // ---- 设置 ----
 function loadCfg(){api("GET","/api/config").then(c=>{
-  $("s_pwd").value="";$("s_token").value=c.api_token||"";$("s_cd").value=c.global_cooldown||0;
+  $("s_pwd").value="";$("s_token").value="";$("s_cd").value=c.global_cooldown||0;
   $("s_aiops_url").value=c.aiops_url||"";$("s_aiops_tok").value="";
+  $("token_hint").textContent=c.api_token_masked?("当前："+c.api_token_masked):"未设置";
 })}
-function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:+$("s_cd").value||0,
+function saveCfg(){const b={global_cooldown:+$("s_cd").value||0,
   aiops_url:$("s_aiops_url").value.trim()};
+  if($("s_token").value.trim())b.api_token=$("s_token").value.trim();
   if($("s_pwd").value)b.web_password=$("s_pwd").value;
   if($("s_aiops_tok").value)b.aiops_token=$("s_aiops_tok").value.trim();
   api("POST","/api/config",b).then(()=>showToast("设置已保存"))}
@@ -2995,6 +3015,9 @@ function boot(){buildSideNav("monitor");refresh("dash");setInterval(()=>{loadSta
   const h=(location.hash||"").slice(1);
   if(PAGE_INFO[h])gotoGroup(PAGE_GROUP[h],h)}
 api("GET","/api/session").then(()=>{boot()}).catch(()=>{$("loginBox").classList.add("show")});
+document.addEventListener("keydown",e=>{if(e.key==="Escape"){
+  const open=[...document.querySelectorAll(".modal.show")];
+  if(open.length)open[open.length-1].classList.remove("show")}});
 document.querySelectorAll(".modal").forEach(m=>{
   let downOnMask=false;
   m.addEventListener("mousedown",e=>{downOnMask=(e.target===m)});
