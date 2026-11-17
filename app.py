@@ -1276,6 +1276,33 @@ def tl_append(conn, log_id, text, kind="info", evidence="", step=False):
         pass
 
 
+def exec_result_of(conn, log_id):
+    """读取执行记录的结果摘要（供 /api/alert 同步返回）。"""
+    row = conn.execute("SELECT status,precheck_line,target_line,error,started_at,finished_at "
+                       "FROM exec_logs WHERE id=?", (log_id,)).fetchone()
+    if not row:
+        return None
+    st = row["status"]
+    tgt = row["target_line"] or ""
+    before = row["precheck_line"] or ""
+    after = tgt if st == "success" else (before if st == "skipped" else "")
+    return {"status": st, "before_line": before, "after_line": after,
+            "target_line": tgt, "reason": row["error"] or "",
+            "started_at": row["started_at"], "finished_at": row["finished_at"],
+            "timeout": st == "running"}
+
+
+def wait_exec_result(conn, log_id, timeout):
+    """轮询任务直至离开 running 状态或超时。返回结果 dict（timeout 标记是否超时）。"""
+    deadline = time.time() + max(0, int(timeout))
+    res = None
+    while True:
+        res = exec_result_of(conn, log_id)
+        if res and res["status"] != "running" or time.time() >= deadline:
+            return res
+        time.sleep(0.5)
+
+
 def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
                   source_line="", decision_note="", init_tl=None, target_line=""):
     """创建执行记录并入队。返回 (log_id, skip_reason)。冷却/串行判断在此。
@@ -1549,7 +1576,9 @@ class Handler(BaseHTTPRequestHandler):
                          now(), now(), json.dumps(init_tl, ensure_ascii=False)))
                     conn.commit()
                     base.update({"task_id": None, "executed": False, "skip_reason": reason,
-                                 "skip_reason_code": "no_target_line"})
+                                 "skip_reason_code": "no_target_line",
+                                 "result": {"status": "skipped", "before_line": "", "after_line": "",
+                                            "target_line": "", "reason": reason}})
                     return self._send_json(base)
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
                 base["device"] = dict(dev) if dev else None
@@ -1561,8 +1590,18 @@ class Handler(BaseHTTPRequestHandler):
                 if skip:
                     base["executed"] = False
                     base["skip_reason"] = skip
+                    base["result"] = {"status": "skipped", "before_line": "", "after_line": "",
+                                      "target_line": plan.get("target_line") or "",
+                                      "reason": skip}
                 else:
                     base["executed"] = True
+                    # 同步等待执行结果（wait=0 时立即返回，仅带 task_id）
+                    try:
+                        wait_s = int(body.get("wait", 120))
+                    except Exception:
+                        wait_s = 120
+                    if log_id is not None and wait_s > 0:
+                        base["result"] = wait_exec_result(conn, log_id, wait_s)
                 return self._send_json(base)
             if path == "/api/logout":
                 return self._send_json({"ok": True}, headers={
