@@ -2244,6 +2244,7 @@ details summary:hover{color:var(--primary)}
   <input id="a_kw" placeholder="选择匹配线路后自动填充">
   <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" data-tip="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
   <textarea id="a_cmd" rows="10"></textarea>
+  <div id="a_cmd_hint" style="display:none;font-size:12px;color:var(--warn-d);margin-top:4px"></div>
   <textarea id="a_rb" style="display:none"></textarea>
   <label>验证命令块（可选，切换完成后重新登录执行并检查期望内容）</label>
   <textarea id="a_verify" rows="2" placeholder="display ip routing-table"></textarea>
@@ -2465,8 +2466,9 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
 
 // ---- 动作 ----
 function renderCoverage(){const o=$("cov_out");if(!o)return;
-  if(!DATA.sites.length){o.innerHTML='<div class="empty">暂无站点</div>';return}
-  o.innerHTML=DATA.sites.map(s=>{
+  const tip='<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">动作与线路的联动关系：触发时先用<b>线路告警关键字</b>识别故障线路，再按 <b>priority</b> 降级选目标线路，最后执行<b>同站点内「目标线路」一致</b>的动作——动作之间无需互相关联，同站点+目标线路即关联。点红色线路补建动作时会自动继承本站点现有动作的设备与命令块模板。</div>';
+  if(!DATA.sites.length){o.innerHTML=tip+'<div class="empty">暂无站点</div>';return}
+  o.innerHTML=tip+DATA.sites.map(s=>{
     const ls=DATA.lines.filter(l=>l.site_id==s.id).sort((a,b)=>a.priority-b.priority||a.id-b.id);
     if(!ls.length)return `<div class="cov-row"><b style="min-width:120px">${esc(s.name)}</b>
       <span style="color:var(--text-faint);font-size:12px">未维护线路：该站点走动作关键词兼容匹配（无降级）</span></div>`;
@@ -2485,6 +2487,14 @@ function newActionFor(siteId,lineId){
   const l=DATA.lines.find(x=>x.id==lineId);if(!l)return;
   $("a_tline").value=lineId;onActionTLineChange();
   $("a_name").value="切到"+l.name;
+  // 联动：继承同站点现有动作的设备/命令块模板/验证命令/冷却，只需把命令块改为本方向
+  const ref=DATA.actions.find(a=>a.site_id==siteId&&a.enabled);
+  const hint=$("a_cmd_hint");hint.style.display="none";
+  if(ref){$("a_device").value=ref.device_id||"";$("a_cd").value=ref.cooldown||0;
+    $("a_verify").value=ref.verify_block||"";
+    $("a_cmd").value=ref.command_block||"";
+    hint.textContent="⚠ 命令块复制自站点动作「"+ref.name+"」，方向策略不同——请改为：undo 其它线路方向（含 "+ref.target_line+"），添加 "+l.name+" 方向（下一跳 "+(l.nexthop_ip||"未填")+"）";
+    hint.style.display="block"}
   $("mActTitle").textContent="新建动作（站点线路："+l.name+"）"}
 function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/sites"),api("GET","/api/devices"),api("GET","/api/lines")]).then(([a,s,d,lines])=>{
   DATA.actions=a;DATA.sites=s;DATA.devices=d;DATA.lines=lines;
@@ -2550,7 +2560,9 @@ function editAction(id){const a=DATA.actions.find(x=>x.id==id)||{};
   else{$("a_kw").value=a.match_keywords||"";$("a_kw").readOnly=false}
   if(tl){$("a_target").value=tl.name||"";$("a_expect").value=tl.nexthop_ip||"";$("a_expect").readOnly=true}
   else{$("a_target").value=a.target_line||"";$("a_expect").value=a.expect_keywords||"";$("a_expect").readOnly=false}
-  $("a_cmd").value=a.command_block||"";$("a_rb").value=a.rollback_block||"";$("a_verify").value=a.verify_block||"";
+  $("a_cmd").value=a.command_block||"";$("a_cmd").placeholder="";
+  $("a_cmd_hint").style.display="none";
+  $("a_rb").value=a.rollback_block||"";$("a_verify").value=a.verify_block||"";
   $("a_cd").value=a.cooldown||0;$("a_en").checked=!!a.enabled||!a.id;
   $("mActTitle").textContent=a.id?"编辑动作 #"+a.id:"新建动作";$("mAct").classList.add("show")}
 function saveAction(){const b={id:$("a_id").value||null,name:$("a_name").value.trim(),
