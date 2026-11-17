@@ -2341,7 +2341,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
-      <div class="card-header"><h3>执行记录<span class="q" data-tip="告警触发的切换任务历史、状态与结果证据。&#10;每 30 秒自动刷新；点击统计卡可按状态筛选。">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
+      <div class="card-header"><span class="sp" style="flex:1"></span><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
       <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col><col style="width:148px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
       <thead><tr>
@@ -2354,7 +2354,6 @@ details summary:hover{color:var(--primary)}
   <!-- 匹配预检 -->
   <div class="page-view" id="p-match">
     <div class="card">
-      <div class="card-header"><h3>匹配预检<span class="q" data-tip="以告警标题校验规则命中与降级链路，只读查询，不产生任何执行。">?</span></h3></div>
       <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
         <div class="toolbar-row">
           <div class="input-group">
@@ -2391,7 +2390,7 @@ details summary:hover{color:var(--primary)}
   <!-- 设备管理 -->
   <div class="page-view" id="p-devices">
     <div class="card">
-      <div class="card-header"><h3>设备列表</h3><button class="btn btn-primary" onclick="editDevice(0)">＋ 新建设备</button></div>
+      <div class="card-header"><span class="sp" style="flex:1"></span><button class="btn btn-primary" onclick="editDevice(0)">＋ 新建设备</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">设备名 / 地址</th><th style="width:110px">站点</th>
         <th style="width:80px">协议</th><th style="width:100px">账号</th><th style="width:70px">超时</th>
@@ -2403,7 +2402,7 @@ details summary:hover{color:var(--primary)}
   <!-- 站点管理 -->
   <div class="page-view" id="p-sites">
     <div class="card">
-      <div class="card-header"><h3>站点列表</h3><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
+      <div class="card-header"><span class="sp" style="flex:1"></span><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:220px">站点名称</th><th>线路</th><th style="width:220px">备注</th><th style="width:220px;text-align:right">操作</th></tr></thead>
       <tbody id="sitetb"></tbody></table></div>
@@ -2413,7 +2412,6 @@ details summary:hover{color:var(--primary)}
   <!-- 全局设置 -->
   <div class="page-view" id="p-settings">
     <div class="card">
-      <div class="card-header"><h3>全局设置<span class="q" data-tip="访问凭据、AIOps 接口与判定参数">?</span></h3></div>
       <div class="card-body">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
         <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认掩码显示；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap"></span></div></div>
@@ -2428,7 +2426,6 @@ details summary:hover{color:var(--primary)}
   <!-- 回调测试 -->
   <div class="page-view" id="p-alerttest">
     <div class="card">
-      <div class="card-header"><h3>回调测试<span class="q" data-tip="模拟 AIOps 告警回调，验证端到端触发链路">?</span></h3></div>
       <div class="card-body">
         <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如 站点A-4G专线中断"></div></div>
         <div style="margin-left:226px"><button class="btn btn-secondary" onclick="testAlert()">发送测试</button></div>
