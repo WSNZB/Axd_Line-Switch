@@ -1954,7 +1954,7 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
       <div class="table-responsive"><table class="data-table" style="table-layout:fixed">
-      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:220px"><col style="width:96px"><col style="width:84px"><col style="width:64px"><col style="width:88px"><col></colgroup>
+      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:26%"><col style="width:112px"><col style="width:104px"><col style="width:60px"><col style="width:88px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
@@ -2262,7 +2262,7 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td><span class="tag ${l.trigger=="api"?"info":"gray"}">${l.trigger=="api"?"API":"手动"}</span></td>
     <td style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis"><span class="keyword-text" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
     <td style="overflow:hidden"><b>${esc(l.action_name)}</b></td><td style="overflow:hidden">${esc(l.device_name)}</td>
-    <td>${l.dry_run?"演练":"切换"}</td>
+    <td style="white-space:nowrap">${l.dry_run?"演练":"切换"}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
     <td style="overflow:hidden"><span class="err-text">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
