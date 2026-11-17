@@ -2351,7 +2351,9 @@ function queryDeviceLine(){const id=$("d_id").value;if(!id)return showToast("请
     if(r.ok){o.textContent="当前生效线路: "+(r.current_line||"未识别")+"\n查询命令: "+r.command+((r.note&&r.note.length>1)?"\n\n"+r.note.slice(1).join("\n"):"")+"\n\n回显:\n"+(r.banner||"")}
     else{o.textContent="查询失败: "+(r.error||"")}})}
 function testDeviceByIdStatus(id){api("POST","/api/devices/"+id+"/status",{}).then(r=>{
-  if(r.ok){let t="当前生效线路: "+(r.current_line||"未识别");if(r.note&&r.note.length>1)t+="\n"+r.note.slice(1).join("\n");showToast(t)}else showToast("查询失败: "+(r.error||""),1)})}
+  if(r.ok){let t="当前生效线路: "+(r.current_line||"未识别");
+    const hint=(r.note||[]).filter(x=>x.indexOf("提示:")===0);if(hint.length)t+="\n"+hint.join("\n");
+    showToast(t)}else showToast("查询失败: "+(r.error||""),1)})}
 
 // ---- 站点 ----
 function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines")]).then(([s,lines])=>{
