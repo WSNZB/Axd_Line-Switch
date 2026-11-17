@@ -2097,23 +2097,23 @@ details summary:hover{color:var(--primary)}
     <div><label>目标设备 *</label><select id="a_device"></select></div>
     <div><label>匹配方式</label><select id="a_mtype"><option value="contains">包含关键词</option><option value="regex">正则表达式</option></select></div>
   </div>
-  <label>匹配线路<span class="q" data-tip="自动读取「站点管理」中该站点已维护的线路。选中后自动填充匹配关键词（告警关键字）、目标线路（线路名称）、期望关键词（下一跳IP），无需手动重复录入。仅当站点未维护线路时才需手动输入。">?</span></label>
-  <select id="a_line" onchange="onActionLineChange()"></select>
+  <div class="grid2">
+    <div><label>匹配线路（触发动作的故障线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路。选中后自动填充匹配关键词=该线路的告警关键字；互斥判定即用此关键字查询其它线路是否有活跃告警。">?</span></label><select id="a_line" onchange="onActionLineChange()"></select></div>
+    <div><label>目标线路（切换后要生效的线路）<span class="q" data-tip="读取「站点管理」中该站点已维护的线路（不含已选的匹配线路）。选中后自动填充期望关键词=该线路的下一跳IP，切换完成后用验证命令检查路由是否指向它。">?</span></label><select id="a_tline" onchange="onActionTLineChange()"></select></div>
+  </div>
+  <input type="hidden" id="a_target">
   <label>匹配关键词 / 正则（包含模式逗号分隔多个，全部包含才命中）*</label>
-  <input id="a_kw" placeholder="选择上方线路后自动填充">
+  <input id="a_kw" placeholder="选择匹配线路后自动填充">
   <label>切换命令块（每行一条命令，# 开头为注释）<span class="q" data-tip="建议一个方向一个动作：命令块内先 undo 掉其它所有方向的策略，再添加本方向，形成「完整状态」——从任意当前状态切过来结果都确定，无需系统排序。">?</span></label>
   <textarea id="a_cmd" rows="10"></textarea>
   <textarea id="a_rb" style="display:none"></textarea>
   <label>验证命令块（可选，切换完成后重新登录执行并检查期望内容）</label>
   <textarea id="a_verify" rows="2" placeholder="display ip routing-table"></textarea>
   <div class="grid2">
-    <div><label>目标线路（选择线路后自动填充）</label><input id="a_target"></div>
-    <div><label>期望关键词（自动取线路下一跳IP）</label><input id="a_expect"></div>
-  </div>
-  <div class="grid2">
+    <div><label>期望关键词（自动取目标线路下一跳IP）</label><input id="a_expect"></div>
     <div><label>冷却时间(秒，0=用全局)</label><input id="a_cd" type="number" value="0"></div>
-    <label class="sw"><input type="checkbox" id="a_en" checked><span>启用该动作</span></label>
   </div>
+  <label class="sw"><input type="checkbox" id="a_en" checked><span>启用该动作</span></label>
   </div>
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mAct')">取消</button>
@@ -2344,37 +2344,51 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
     '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无动作</div></td></tr>'})}
 function fillSelect(sel,list,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
   list.map(x=>`<option value="${x.id}">${esc(labelFirst?x.name:x.name+(x.host?" ("+x.host+")":""))}</option>`).join("")}
+function lineOptions(ls,excludeId){return ls.filter(l=>l.id!=excludeId)
+  .map(l=>`<option value="${l.id}">${esc(l.name)}${l.enabled?"":"（停用）"}</option>`).join("")}
 function refreshActionLines(){const sid=+$("a_site").value||0;
   const ls=sid?DATA.lines.filter(l=>l.site_id==sid):[];
-  const sel=$("a_line");
-  if(!sid){sel.innerHTML=`<option value="">(请先选择所属站点)</option>`}
-  else if(!ls.length){sel.innerHTML=`<option value="">(该站点未维护线路，可手动输入关键词)</option>`}
-  else{sel.innerHTML=`<option value="">(选择线路自动填充)</option>`+
-    ls.map(l=>`<option value="${l.id}">${esc(l.name)}${l.enabled?"":"（停用）"}</option>`).join("")+
-    `<option value="__custom">自定义（手动输入关键词）</option>`}}
-function setActionLineFields(editable){["a_kw","a_target","a_expect"].forEach(id=>{$(id).readOnly=!editable})}
-function onActionSiteChange(){refreshActionLines();$("a_line").value="";setActionLineFields(true);
+  $("a_line").innerHTML=!sid?`<option value="">(请先选择所属站点)</option>`:
+    `<option value="">${ls.length?"(选择匹配线路自动填关键词)":"(该站点未维护线路，手动输入关键词)"}</option>`+
+    lineOptions(ls,null)+(ls.length?`<option value="__custom">自定义（手动输入关键词）</option>`:"");
+  refreshActionTLines()}
+function refreshActionTLines(){const sid=+$("a_site").value||0;
+  const ls=sid?DATA.lines.filter(l=>l.site_id==sid):[];
+  const mv=$("a_line").value,mid=mv&&mv!="__custom"?+mv:0;
+  $("a_tline").innerHTML=!sid?`<option value="">(请先选择所属站点)</option>`:
+    `<option value="">${ls.length?"(选择目标线路自动填期望关键词)":"(该站点未维护线路，手动输入期望关键词)"}</option>`+
+    lineOptions(ls,mid)+(ls.length?`<option value="__custom">自定义（手动输入）</option>`:"")}
+function onActionSiteChange(){refreshActionLines();$("a_line").value="";$("a_tline").value="";
+  $("a_kw").readOnly=false;$("a_expect").readOnly=false;
   $("a_kw").value="";$("a_target").value="";$("a_expect").value=""}
-function onActionLineChange(){const v=$("a_line").value;
-  if(!v||v=="__custom"){setActionLineFields(true);return}
+function onActionLineChange(){const v=$("a_line").value;refreshActionTLines();
+  if(!v||v=="__custom"){$("a_kw").readOnly=false;return}
   const l=DATA.lines.find(x=>x.id==v);if(!l)return;
-  $("a_kw").value=l.alarm_keywords||"";$("a_target").value=l.name||"";$("a_expect").value=l.nexthop_ip||"";
-  setActionLineFields(false)}
+  $("a_kw").value=l.alarm_keywords||"";$("a_kw").readOnly=!!(l.alarm_keywords||"").trim()}
+function onActionTLineChange(){const v=$("a_tline").value;
+  if(!v||v=="__custom"){$("a_expect").readOnly=false;$("a_target").value="";return}
+  const l=DATA.lines.find(x=>x.id==v);if(!l)return;
+  $("a_target").value=l.name||"";$("a_expect").value=l.nexthop_ip||"";
+  $("a_expect").readOnly=!!(l.nexthop_ip||"").trim()}
 function editAction(id){const a=DATA.actions.find(x=>x.id==id)||{};
   fillSelect("a_site",DATA.sites);fillSelect("a_device",DATA.devices);
   $("a_id").value=a.id||"";$("a_name").value=a.name||"";$("a_site").value=a.site_id||"";
   $("a_device").value=a.device_id||"";$("a_mtype").value=a.match_type||"contains";
   refreshActionLines();
-  let pre="";
+  let pre="",tpre="";
   if(a.site_id){const kw=(a.match_keywords||"").trim();
-    const cands=kw?DATA.lines.filter(l=>l.site_id==a.site_id&&(l.alarm_keywords||"").trim()==kw):[];
-    if(cands.length==1)pre=String(cands[0].id)}
-  $("a_line").value=pre;
-  if(pre){const l=DATA.lines.find(x=>x.id==pre);
-    $("a_kw").value=l.alarm_keywords||"";$("a_target").value=l.name||"";$("a_expect").value=l.nexthop_ip||"";
-    setActionLineFields(false)}
-  else{setActionLineFields(true);
-    $("a_kw").value=a.match_keywords||"";$("a_expect").value=a.expect_keywords||"";$("a_target").value=a.target_line||""}
+    if(kw){const cands=DATA.lines.filter(l=>l.site_id==a.site_id&&(l.alarm_keywords||"").trim()==kw);
+      if(cands.length==1)pre=String(cands[0].id)}
+    const tn=(a.target_line||"").trim();
+    if(tn){const tc=DATA.lines.filter(l=>l.site_id==a.site_id&&l.name==tn&&String(l.id)!=pre);
+      if(tc.length==1)tpre=String(tc[0].id)}}
+  $("a_line").value=pre;refreshActionTLines();$("a_tline").value=tpre;
+  const ml=pre?DATA.lines.find(x=>x.id==pre):null;
+  const tl=tpre?DATA.lines.find(x=>x.id==tpre):null;
+  if(ml&&ml.alarm_keywords){$("a_kw").value=ml.alarm_keywords;$("a_kw").readOnly=true}
+  else{$("a_kw").value=a.match_keywords||"";$("a_kw").readOnly=false}
+  if(tl){$("a_target").value=tl.name||"";$("a_expect").value=tl.nexthop_ip||"";$("a_expect").readOnly=true}
+  else{$("a_target").value=a.target_line||"";$("a_expect").value=a.expect_keywords||"";$("a_expect").readOnly=false}
   $("a_cmd").value=a.command_block||"";$("a_rb").value=a.rollback_block||"";$("a_verify").value=a.verify_block||"";
   $("a_cd").value=a.cooldown||0;$("a_en").checked=!!a.enabled||!a.id;
   $("mActTitle").textContent=a.id?"编辑动作 #"+a.id:"新建动作";$("mAct").classList.add("show")}
