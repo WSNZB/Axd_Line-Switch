@@ -889,8 +889,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                          (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
             conn.commit()
             if not ok:
-                tl_append(conn, log_id, "命令失败（%d/%d）：%s" % (i, len(cmds), cmd), "bad",
-                          evidence=(err + "\n" + out) if out else err)
+                tl_append(conn, log_id, "命令失败（%d/%d）：%s，详见下方命令执行" % (i, len(cmds), cmd), "bad")
                 return (False, "第 %d 条命令失败: %s | %s" % (i, cmd, err),
                         login_note, precheck_line, False, "")
         tl_append(conn, log_id, "切换命令下发完成（%d/%d）" % (len(cmds), len(cmds)), "ok")
@@ -907,10 +906,9 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 verr = ("切换命令已下发，但命令回显中未找到期望内容 %s"
                         "（切换前线路: %s，请检查命令块输出或改在验证命令块配置查询命令）"
                         % (",".join(missing), precheck_disp or precheck_line or "未知"))
-                tl_append(conn, log_id, "验证未通过：回显未包含 %s" % "、".join(missing), "bad",
-                          evidence=vtext)
+                tl_append(conn, log_id, "验证未通过：回显未包含 %s" % "、".join(missing), "bad")
             else:
-                tl_append(conn, log_id, "验证通过", "ok", evidence=vtext)
+                tl_append(conn, log_id, "验证通过", "ok")
         elif verify_cmds or expect_kws:
             tl_append(conn, log_id, "验证：重新登录设备执行验证命令" if verify_cmds
                       else "验证：重新登录设备检查期望内容")
@@ -945,11 +943,10 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                         verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
                                 "（切换前线路: %s，可能路由未收敛或切换失败）"
                                 % (",".join(missing), precheck_disp or precheck_line or "未知"))
-                        tl_append(conn, log_id, "验证未通过：路由表未包含 %s" % "、".join(missing), "bad",
-                                  evidence=vtext)
+                        tl_append(conn, log_id, "验证未通过：路由表未包含 %s，详见下方命令执行" % "、".join(missing), "bad")
                     else:
                         tl_append(conn, log_id, "验证通过：路由表指向目标线路（%s）"
-                                  % "、".join(expect_kws), "ok", evidence=vtext)
+                                  % "、".join(expect_kws), "ok")
             except Exception as e:
                 verify_ok = False
                 verr = "验证会话登录失败: %s" % e
@@ -2267,7 +2264,7 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
       <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div>
       ${t.ev?`<div class="tl-ev"><span class="tl-ev-t" onclick="this.parentElement.classList.toggle('open')">证据</span><pre class="out">${esc(t.ev)}</pre></div>`:""}</div>`).join("")+`</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
-  if(l.session_log)h+=term("会话原文",l.session_log,false);
+  if(l.session_log&&!(l.steps&&l.steps.length))h+=term("会话原文（登录收发记录）",l.session_log,true);
   if((l.steps||[]).length)h+=`<div class="timeline-title">命令执行</div>`;
   h+=(l.steps||[]).map(s=>`<div class="accordion${s.ok?"":" open"}">
     <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
@@ -2277,7 +2274,6 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
         <div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">Router Output</span></div>
         <div class="terminal-body ${s.ok?"":"err"}">${esc(s.output)||"(无回显)"}</div>
       </div>
-      ${(s.raw_output&&s.raw_output!==s.output)?`<div style="margin-top:12px"><div class="accordion"><div class="accordion-header" onclick="this.parentElement.classList.toggle('open')" style="font-size:13px;color:var(--text-muted)">原始回显（含命令回显与提示符）</div><div class="accordion-content"><div class="plain">${esc(s.raw_output)}</div></div></div></div>`:""}
     </div></div></div>`).join("");
   $("mLogBody").innerHTML=h;$("mLog").classList.add("show")})}
 
