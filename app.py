@@ -355,10 +355,10 @@ def _kw_match(keywords, text):
 
 
 def site_lines(conn, site_id):
-    """站点启用中的线路，按 priority 升序（1 最优先）。"""
+    """站点启用中的线路（priority 字段已废弃，降级顺序以规则阶梯为准），按创建顺序返回。"""
     if not site_id:
         return []
-    return conn.execute("SELECT * FROM lines WHERE site_id=? AND enabled=1 ORDER BY priority,id",
+    return conn.execute("SELECT * FROM lines WHERE site_id=? AND enabled=1 ORDER BY id",
                         (site_id,)).fetchall()
 
 
@@ -393,7 +393,7 @@ def resolve_fault_sites(conn, title):
     """按各站点线路的告警关键字匹配标题，返回 ({site_id: [故障线路名...]}, {site_id: 站点名})。"""
     rows = conn.execute("SELECT l.*, s.name AS site_name FROM lines l "
                         "LEFT JOIN sites s ON l.site_id=s.id WHERE l.enabled=1 "
-                        "ORDER BY l.site_id, l.priority, l.id").fetchall()
+                        "ORDER BY l.site_id, l.id").fetchall()
     faults, site_names = {}, {}
     for ln in rows:
         site_names[ln["site_id"]] = ln["site_name"]
@@ -489,8 +489,7 @@ def plan_switch(conn, title, site_id=None):
     def check_line(name):
         """线路健康状态查询（同一次判定内缓存）。返回 step dict。"""
         ln = lines.get(name)
-        st = {"line": name, "priority": ln["priority"] if ln else None,
-              "nexthop": ln["nexthop_ip"] if ln else ""}
+        st = {"line": name, "nexthop": ln["nexthop_ip"] if ln else ""}
         if name in fl:
             st["status"] = "fault"
             return st
@@ -1047,7 +1046,7 @@ def site_line_ip_map(conn, site_id):
     m = {}
     sql = ("SELECT name,alarm_keywords,nexthop_ip FROM lines WHERE enabled=1"
            + (" AND site_id=?" if site_id else "")
-           + " ORDER BY " + ("priority,id" if site_id else "site_id,priority,id"))
+           + " ORDER BY site_id, id")
     rows = conn.execute(sql, (site_id,) if site_id else ()).fetchall()
     for ln in rows:
         ip = (ln["nexthop_ip"] or "").strip()
@@ -1537,12 +1536,12 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/lines":
                 sid = (qs.get("site_id") or [None])[0]
                 if sid:
-                    rows = conn.execute("SELECT * FROM lines WHERE site_id=? ORDER BY priority,id",
+                    rows = conn.execute("SELECT * FROM lines WHERE site_id=? ORDER BY id",
                                         (int(sid),)).fetchall()
                 else:
                     rows = conn.execute(
                         "SELECT l.*, s.name AS site_name FROM lines l LEFT JOIN sites s ON l.site_id=s.id "
-                        "ORDER BY l.site_id, l.priority, l.id").fetchall()
+                        "ORDER BY l.site_id, l.id").fetchall()
                 return self._send_json([dict(r) for r in rows])
             if path == "/api/actions":
                 rows = conn.execute(
@@ -1621,7 +1620,7 @@ class Handler(BaseHTTPRequestHandler):
                                      "note": plan["note"], "site": plan.get("site_name"),
                                      "fault_lines": plan.get("fault_lines"),
                                      "target_line": plan.get("target_line"),
-                                     "steps": [{k: s.get(k) for k in ("line", "priority", "status",
+                                     "steps": [{k: s.get(k) for k in ("line", "status",
                                                                       "pending", "handling", "action")}
                                                for s in plan.get("steps") or []]}}
                 # 逐条线路降级体检证据（真实 gs 请求 + 原始响应）
@@ -1765,7 +1764,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "reason": p.get("reason"), "note": p.get("note"),
                                 "legacy": p.get("legacy"),
                                 "action_name": p["action"]["name"] if p["action"] else None,
-                                "steps": [{k: s.get(k) for k in ("line", "priority", "status",
+                                "steps": [{k: s.get(k) for k in ("line", "status",
                                                                  "pending", "handling", "action")}
                                           for s in p.get("steps") or []]}
                     except Exception as e:
@@ -2326,12 +2325,12 @@ details summary:hover{color:var(--primary)}
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><h3>线路切换覆盖<span class="q" data-tip="多线路站点：每条线路需配一条「切到该线路」的动作。&#10;告警触发时按线路 priority 升序降级，选第一条无活跃告警且已配动作的线路作为目标；未配动作的线路会被跳过。&#10;点红色线路名可直接补建动作；priority 可在「站点管理 → 线路」里用 ↑↓ 调整。">?</span></h3>
+      <div class="card-header"><h3>线路切换覆盖<span class="q" data-tip="多线路站点：每条线路都应出现在某条规则的目标阶梯中。&#10;告警触发时按规则阶梯顺序（=优先级）逐条体检目标线路，选第一条无活跃告警且配了本方向命令的目标；全部告警/缺命令则不切换。&#10;点红色线路名可将其追加到规则阶梯。">?</span></h3>
         <button class="btn btn-secondary btn-sm" onclick="loadActions()">刷新</button></div>
       <div class="card-body" id="cov_out"></div>
     </div>
     <div class="card">
-      <div class="card-header"><h3>动作规则<span class="q" data-tip="每个动作 = 「切到某条目标线路」的一组命令（命令块为全量状态：先 undo 其它方向再添加本方向，与从哪条切过来无关）。&#10;同一站点请按「目标线路」各建一条动作；告警触发时系统按站点线路的 priority 升序降级，选第一条无活跃告警的线路作为目标并执行对应动作。&#10;匹配关键词仅用于「匹配预检」与站点未配置线路时的兼容匹配；命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
+      <div class="card-header"><h3>动作规则<span class="q" data-tip="一条规则 = 一个降级阶梯：按顺序配置多个目标线路及各自的切换命令（命令块为全量状态：先 undo 其它方向再添加本方向，与从哪条切过来无关）。&#10;告警触发时按阶梯顺序（=优先级）逐条体检目标线路，选中第一条无活跃告警的目标并下发它的命令。&#10;降级顺序只在规则阶梯这一处维护；匹配关键词仅用于「匹配预检」与站点未配置线路时的兼容匹配；命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
         <th>匹配关键词 / 正则（预检用）</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
@@ -2492,19 +2491,16 @@ details summary:hover{color:var(--primary)}
 
 <!-- 站点线路 -->
 <div class="modal" id="mLine"><div class="box" style="width:780px">
-  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" data-tip="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断该线路是否仍有活跃告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护）。&#10;优先级决定多线路降级的顺序：某条线路告警时，系统按优先级 1→2→3 依次检查其它线路，第一条无活跃告警的线路即切换目标；全部告警则不切换。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
+  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" data-tip="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断该线路是否仍有活跃告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护），并作为切换规则中该目标线路的期望验证关键词默认值。&#10;降级切换的先后顺序在「切换配置 → 切换动作」的规则阶梯里维护，此处不再设置优先级。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
-  <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" data-tip="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">优先级</th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
+  <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" data-tip="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
   <tbody id="ltb"></tbody></table></div>
   <div class="grid2" style="margin-top:14px">
     <div><label>线路名</label><input id="l_name" placeholder="如 Airtel"></div>
     <div><label>下一跳IP（该线路生效时 0.0.0.0/0 的 NextHop）</label><input id="l_ip" placeholder="如 192.168.130.10"></div>
   </div>
-  <div class="grid2">
-    <div><label>告警关键词(逗号分隔)</label><input id="l_kw" placeholder="如 41.243.21.170,Airtel"></div>
-    <div><label>优先级（1 最高，降级按此顺序）</label><input id="l_pri" type="number" value="1"></div>
-  </div>
+  <div><label>告警关键词(逗号分隔)</label><input id="l_kw" placeholder="如 41.243.21.170,Airtel"></div>
   </div>
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mLine')">关闭</button>
@@ -2888,33 +2884,18 @@ function delSite(id){if(confirm("确认删除站点 #"+id+"？"))api("DELETE","/
 // ---- 站点线路（互斥判定依据） ----
 function manageLines(siteId,siteName){$("l_site").value=siteId;
   $("mLineTitle").textContent="站点线路 · "+siteName;
-  $("l_name").value="";$("l_kw").value="";$("l_ip").value="";$("l_pri").value=1;
+  $("l_name").value="";$("l_kw").value="";$("l_ip").value="";
   loadLines(siteId);$("mLine").classList.add("show")}
 function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
   DATA.lines=DATA.lines.filter(l=>l.site_id!=siteId).concat(ls);
-  const ordered=ls.slice().sort((a,b)=>a.priority-b.priority||a.id-b.id);
-  $("ltb").innerHTML=ls.length?ordered.map((l,i)=>`<tr>
+  $("ltb").innerHTML=ls.length?ls.map(l=>`<tr>
     <td><b>${esc(l.name)}</b></td><td><span class="keyword-text mono" style="color:var(--text-muted)">${esc(l.alarm_keywords)||'(空)'}</span></td>
     <td class="mono" style="color:var(--text-muted)">${esc(l.nexthop_ip)||'-'}</td>
-    <td><div style="display:flex;align-items:center;gap:4px">
-      <b>${l.priority}</b>
-      <button class="btn btn-sm btn-secondary" style="padding:2px 6px" ${i===0?"disabled":""} onclick="moveLine(${l.id},-1)" title="提前（降级时更优先）">↑</button>
-      <button class="btn btn-sm btn-secondary" style="padding:2px 6px" ${i===ordered.length-1?"disabled":""} onclick="moveLine(${l.id},1)" title="后移（降级时更靠后）">↓</button>
-    </div></td>
     <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=6><div class="empty">暂无线路</div></td></tr>'})}
-function moveLine(id,dir){
-  const sid=+$("l_site").value;
-  const ls=DATA.lines.filter(l=>l.site_id==sid).sort((a,b)=>a.priority-b.priority||a.id-b.id);
-  const i=ls.findIndex(x=>x.id==id),j=i+dir;
-  if(i<0||j<0||j>=ls.length)return;
-  const a=ls[i],b=ls[j];
-  Promise.all([api("PUT","/api/lines/"+a.id,{priority:j+1}),
-               api("PUT","/api/lines/"+b.id,{priority:i+1})])
-    .then(()=>{loadLines(sid);loadSites();showToast("优先级已调整")})}
+    '<tr><td colspan=5><div class="empty">暂无线路</div></td></tr>'})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
-  alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim(),priority:+$("l_pri").value||1};
+  alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim()};
   if(!b.name)return showToast("线路名必填",1);
   api("POST","/api/lines",b).then(()=>{$("l_name").value="";$("l_kw").value="";$("l_ip").value="";
     showToast("线路已添加");loadLines(b.site_id);loadSites()})}
