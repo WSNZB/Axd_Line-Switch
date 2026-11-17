@@ -847,7 +847,8 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
                 precheck_disp = parse_current_line(out, "", dev["current_regex"], with_ip=True, extra_map=emap)
                 login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
-                tl_append(conn, log_id, "当前生效线路：%s" % (precheck_disp or "未识别"))
+                tl_append(conn, log_id, "当前生效线路：%s" % (precheck_disp or "未识别"),
+                          evidence="查询命令: %s\n\n%s" % (dev["status_command"].strip(), out))
             except Exception as e:
                 login_note += "\n[切换前] 状态查询失败: %s" % e
                 tl_append(conn, log_id, "当前线路查询失败：%s" % e, "warn")
@@ -888,7 +889,8 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                          (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
             conn.commit()
             if not ok:
-                tl_append(conn, log_id, "命令失败（%d/%d）：%s" % (i, len(cmds), cmd), "bad")
+                tl_append(conn, log_id, "命令失败（%d/%d）：%s" % (i, len(cmds), cmd), "bad",
+                          evidence=(err + "\n" + out) if out else err)
                 return (False, "第 %d 条命令失败: %s | %s" % (i, cmd, err),
                         login_note, precheck_line, False, "")
         tl_append(conn, log_id, "切换命令下发完成（%d/%d）" % (len(cmds), len(cmds)), "ok")
@@ -905,9 +907,10 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 verr = ("切换命令已下发，但命令回显中未找到期望内容 %s"
                         "（切换前线路: %s，请检查命令块输出或改在验证命令块配置查询命令）"
                         % (",".join(missing), precheck_disp or precheck_line or "未知"))
-                tl_append(conn, log_id, "验证未通过：回显未包含 %s" % "、".join(missing), "bad")
+                tl_append(conn, log_id, "验证未通过：回显未包含 %s" % "、".join(missing), "bad",
+                          evidence=vtext)
             else:
-                tl_append(conn, log_id, "验证通过", "ok")
+                tl_append(conn, log_id, "验证通过", "ok", evidence=vtext)
         elif verify_cmds or expect_kws:
             tl_append(conn, log_id, "验证：重新登录设备执行验证命令" if verify_cmds
                       else "验证：重新登录设备检查期望内容")
@@ -942,10 +945,11 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                         verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
                                 "（切换前线路: %s，可能路由未收敛或切换失败）"
                                 % (",".join(missing), precheck_disp or precheck_line or "未知"))
-                        tl_append(conn, log_id, "验证未通过：路由表未包含 %s" % "、".join(missing), "bad")
+                        tl_append(conn, log_id, "验证未通过：路由表未包含 %s" % "、".join(missing), "bad",
+                                  evidence=vtext)
                     else:
                         tl_append(conn, log_id, "验证通过：路由表指向目标线路（%s）"
-                                  % "、".join(expect_kws), "ok")
+                                  % "、".join(expect_kws), "ok", evidence=vtext)
             except Exception as e:
                 verify_ok = False
                 verr = "验证会话登录失败: %s" % e
@@ -1042,15 +1046,19 @@ def _worker():
                 pass
 
 
-def tl_append(conn, log_id, text, kind="info"):
-    """向执行记录时间线追加一条带时间戳的关键步骤（全链路过程可视化）。"""
+def tl_append(conn, log_id, text, kind="info", evidence=""):
+    """向执行记录时间线追加一条带时间戳的关键步骤（全链路过程可视化）。
+    evidence: 该步骤的原始证据（设备回显 / 接口数据片段），前端可展开查看。"""
     try:
         row = conn.execute("SELECT timeline FROM exec_logs WHERE id=?", (log_id,)).fetchone()
         try:
             tl = json.loads(row["timeline"] or "[]") if row and row["timeline"] else []
         except ValueError:
             tl = []
-        tl.append({"ts": now(), "text": text, "kind": kind})
+        item = {"ts": now(), "text": text, "kind": kind}
+        if evidence:
+            item["ev"] = str(evidence)[:4000]
+        tl.append(item)
         conn.execute("UPDATE exec_logs SET timeline=? WHERE id=?",
                      (json.dumps(tl, ensure_ascii=False), log_id))
         conn.commit()
@@ -1291,7 +1299,7 @@ class Handler(BaseHTTPRequestHandler):
                     if act["site_id"] else None
                 init_tl.append({"ts": now(), "kind": "ok",
                                 "text": "命中动作：%s（站点：%s）"
-                                % (act["name"], site_row["name"] if site_row else "未关联", len(hits))})
+                                % (act["name"], site_row["name"] if site_row else "未关联")})
                 dry_run = 1 if str(body.get("dry_run", "")).lower() in ("1", "true", "yes") else 0
                 # 站点线路互斥判定：多条线路同时告警 / 无法确认故障线路 → 不切换
                 if conn.execute("SELECT 1 FROM lines WHERE site_id=? AND enabled=1 LIMIT 1",
@@ -1301,10 +1309,16 @@ class Handler(BaseHTTPRequestHandler):
                                     % (kv_get(conn, "active_window_min", "30") or 30)})
                 allow, reason, decision = judge_site_alarms(conn, title, act)
                 if decision.get("fault_lines"):
+                    _ad = decision.get("active_detail") or {}
+                    _ev = ("窗口 %s 分钟内未恢复告警命中线路：%s"
+                           % (decision.get("window_min"),
+                              "；".join("%s←%s" % (k, "|".join(v)) for k, v in _ad.items())
+                              or "无")) if _ad else ""
                     init_tl.append({"ts": now(), "kind": "info",
                                     "text": "故障线路：%s；活跃告警线路：%s"
                                     % ("、".join(decision["fault_lines"]),
-                                       "、".join(decision.get("active_lines") or []) or "无")})
+                                       "、".join(decision.get("active_lines") or []) or "无"),
+                                    "ev": _ev})
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
                 base = {"matched": True, "title": title,
                         "action": {"id": act["id"], "name": act["name"], "site_id": act["site_id"]},
@@ -1846,6 +1860,11 @@ pre.out .err{color:#fca5a5}
 .tl-item.warn .tl-text{color:var(--warn-d)}
 .tl-item.bad .tl-text{color:var(--danger-d);font-weight:500}
 .tl-ts{font-size:11px;color:var(--text-faint);font-family:ui-monospace,Menlo,Consolas,monospace;margin-top:2px}
+.tl-ev{margin-top:6px}
+.tl-ev-t{display:inline-block;font-size:11px;color:var(--text-muted);border:1px solid var(--border);border-radius:4px;padding:1px 8px;cursor:pointer;background:#f8fafc}
+.tl-ev-t:hover{color:var(--primary);border-color:var(--primary)}
+.tl-ev pre{display:none;margin-top:6px}
+.tl-ev.open pre{display:block}
 .timeline-title{font-size:14px;font-weight:600;margin-bottom:12px}
 details{margin:8px 0}
 details summary{cursor:pointer;color:var(--text-muted);font-size:12.5px;padding:4px 0;outline:none}
@@ -2245,10 +2264,11 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   let tl=[];try{tl=JSON.parse(l.timeline||"[]")}catch(e){}
   if(tl.length)h+=`<div class="timeline-title">执行过程</div><div class="timeline">`+
     tl.map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
-      <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div></div>`).join("")+`</div>`;
+      <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div>
+      ${t.ev?`<div class="tl-ev"><span class="tl-ev-t" onclick="this.parentElement.classList.toggle('open')">证据</span><pre class="out">${esc(t.ev)}</pre></div>`:""}</div>`).join("")+`</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
-  if(l.matched_note)h+=term("登录过程摘要",l.matched_note,false);
-  if(l.session_log)h+=term("会话原文（登录 banner + 全部收发，排障用）",l.session_log,false);
+  if(l.session_log)h+=term("会话原文",l.session_log,false);
+  if((l.steps||[]).length)h+=`<div class="timeline-title">命令执行</div>`;
   h+=(l.steps||[]).map(s=>`<div class="accordion${s.ok?"":" open"}">
     <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
       <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="${s.ok?"tag-ok":"tag-fail"}">${s.ok?"OK":"FAIL"}</span><span class="command-text">${esc(s.command)}</span></span>${ARROW}</div>
