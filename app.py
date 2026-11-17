@@ -1774,10 +1774,11 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .tag.gray{background:#f1f5f9;color:#64748b}
 .keyword-text{color:#334155;line-height:1.5;max-width:400px;display:inline-block;word-break:break-all}
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
-.err-text{color:var(--danger);font-size:12px;display:inline-block;line-height:1.6}
+.err-text{color:var(--danger);font-size:12px;display:inline-block;line-height:1.5;max-width:320px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:bottom;cursor:default}
 
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-grid.stat-6{grid-template-columns:repeat(6,1fr)}
 .stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:18px 20px;display:flex;align-items:center;gap:14px;box-shadow:0 1px 3px rgba(0,0,0,.02)}
 .stat-ic{width:42px;height:42px;border-radius:8px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
 .stat-ic svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
@@ -1910,6 +1911,7 @@ details summary:hover{color:var(--primary)}
   .nav-item{justify-content:center;padding:11px}
   .nav-item svg{margin-right:0}
   .stat-grid,.grid2,.grid3,.kv{grid-template-columns:1fr}
+  .stat-grid.stat-6{grid-template-columns:repeat(3,1fr)}
   .kv label{text-align:left}
   .content-scroll{padding:16px}
 }
@@ -1948,12 +1950,12 @@ details summary:hover{color:var(--primary)}
 
   <!-- 执行记录 -->
   <div class="page-view active" id="p-dash">
-    <div class="stat-grid" id="stat"></div>
+    <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
       <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:70px">ID</th><th style="width:160px">时间</th><th style="width:80px">触发</th><th>告警标题</th>
-        <th>动作</th><th>设备</th><th style="width:70px">模式</th><th style="width:110px">状态</th><th>错误</th></tr></thead>
+        <th style="width:60px">ID</th><th style="width:150px">时间</th><th style="width:70px">触发</th><th style="width:260px">告警标题</th>
+        <th style="width:150px">动作</th><th style="width:130px">设备</th><th style="width:60px">模式</th><th style="width:100px">状态</th><th>错误</th></tr></thead>
       <tbody id="logtb"></tbody></table></div>
     </div>
   </div>
@@ -2261,7 +2263,7 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td><b>${esc(l.action_name)}</b></td><td>${esc(l.device_name)}</td>
     <td>${l.dry_run?"演练":(l.rollback?"回切":"切换")}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
-    <td><span class="err-text">${esc(l.error)}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
+    <td><span class="err-text" title="${esc(l.error)}">${esc(l.error)}</span></td></tr>`}).join(""):'<tr><td colspan=9><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
