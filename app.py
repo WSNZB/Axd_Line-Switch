@@ -1806,6 +1806,8 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
 .err-text{color:#b91c1c;font-size:12px;line-height:1.5}
 .data-table td.cell1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.data-table.log-tb td{padding:14px 12px}
+.data-table.log-tb th{padding:12px 12px}
 
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
@@ -1984,8 +1986,8 @@ details summary:hover{color:var(--primary)}
     <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
       <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
-      <div class="table-responsive"><table class="data-table" style="table-layout:fixed">
-      <colgroup><col style="width:44px"><col style="width:138px"><col style="width:52px"><col style="width:20%"><col style="width:96px"><col style="width:96px"><col style="width:52px"><col style="width:88px"><col></colgroup>
+      <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed">
+      <colgroup><col style="width:40px"><col style="width:165px"><col style="width:46px"><col style="width:357px"><col style="width:175px"><col style="width:112px"><col style="width:52px"><col style="width:76px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
