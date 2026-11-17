@@ -326,9 +326,12 @@ def query_line_active(conn, gs_kw):
         params = {"gs": gs_kw, "offset": 0, "limit": 5, "search_unit_list": sul}
         full_url = api + "?" + urllib.parse.urlencode(params)
         result["requests"].append(full_url)
-        # 展示用：gs 与 search_unit_list 保持中文原文（不 URL 编码），便于人核对
+        # 展示用：gs/JSON 保持中文原文（不 URL 编码），参数顺序与紧凑格式便于人核对
+        sul_c = json.dumps([{"attr": "is_ignore", "search": [0], "operator": "="},
+                           {"attr": "status", "search": [status], "operator": "="}],
+                          ensure_ascii=False, separators=(",", ":"))
         result["display"].append("%s?offset=0&limit=5&gs=%s&search_unit_list=%s"
-                                 % (api.split("?")[0], gs_kw, sul))
+                                 % (api.split("?")[0], gs_kw, sul_c))
         req = urllib.request.Request(full_url, headers={"token": token})
         with urllib.request.urlopen(req, timeout=20) as r:
             raw = r.read().decode("utf-8")
@@ -581,6 +584,80 @@ def _fmt_req_human(url):
         return url
 
 
+def _display_from_url(url):
+    """把实际请求的编码 URL 还原为可读展示格式（gs/JSON 中文原文）。"""
+    import urllib.parse
+    try:
+        pr = urllib.parse.urlparse(url)
+        qs = urllib.parse.parse_qs(pr.query)
+        gs = (qs.get("gs") or [""])[0]
+        sul = (qs.get("search_unit_list") or [""])[0]
+        try:
+            sul_c = json.dumps(json.loads(sul), ensure_ascii=False, separators=(",", ":"))
+        except Exception:
+            sul_c = sul
+        return "%s://%s%s?offset=%s&limit=%s&gs=%s&search_unit_list=%s" % (
+            pr.scheme, pr.netloc, pr.path, (qs.get("offset") or ["0"])[0],
+            (qs.get("limit") or ["5"])[0], gs, sul_c)
+    except Exception:
+        return url
+
+
+_STATUS_REV = {v: k for k, v in _STEP_STATUS_TXT.items() if k != "legacy"}
+
+
+def parse_ev_to_evd(ev_text):
+    """旧记录：从 line_steps_evidence 纯文本反解析出 {steps, trace} 结构，
+    供按最新证据样式重新渲染（历史记录不再锁死旧格式）。"""
+    steps, raws, cur = [], [], None
+    cur_raw = None
+    for ln in (ev_text or "").splitlines():
+        if cur_raw is not None:
+            if re.match(r"^(?:目标|线路) ", ln):
+                raws.append("\n".join(cur_raw).strip()[:600])
+                cur_raw = None
+            else:
+                cur_raw.append(ln)
+                continue
+        if ln.startswith("AIOps 原始响应"):
+            cur_raw = []
+            continue
+        mreq = re.match(r"^\s+实际请求: (\S+)", ln)
+        if mreq and cur is not None:
+            u = mreq.group(1)
+            cur.setdefault("requests", []).append(u)
+            cur.setdefault("display", []).append(_display_from_url(u))
+            continue
+        if " → " not in ln or not re.match(r"^(?:目标|线路) ", ln):
+            continue
+        head, concl = ln.rsplit(" → ", 1)
+        m = re.match(r"^(?:目标|线路) (.+?)（", head)
+        if not m:
+            continue
+        st = {"line": m.group(1), "status": _STATUS_REV.get(concl.strip(), "info")}
+        am = re.search(r"规则:(.+?)）", head)
+        if am:
+            st["action"] = am.group(1)
+        gm = re.search(r"gs=(.+?)，未处理", head)
+        if gm:
+            st["gs"] = gm.group(1)
+        pm = re.search(r"未处理 (\d+|None)，处理中 (\d+|None)", head)
+        if pm:
+            def _n(x):
+                return None if x in ("None", "-") else int(x)
+            st["pending"], st["handling"] = _n(pm.group(1)), _n(pm.group(2))
+        if "；样例: " in head:
+            st["titles"] = head.split("；样例: ", 1)[1].split(" | ")
+        cur = st
+        steps.append(st)
+    if cur_raw:
+        raws.append("\n".join(cur_raw).strip()[:600])
+    disp = [u for st in steps for u in st.get("display") or []]
+    reqs = [u for st in steps for u in st.get("requests") or []]
+    return {"steps": steps, "trace": {"display": disp, "raws": [r for r in raws if r],
+                                       "requests": reqs}}
+
+
 def line_steps_evidence_html(plan):
     """降级体检证据 → 结构化 HTML：表格（目标线路/所属规则/告警关键字/未处理/处理中/结论）
     + 每条查询的可读请求。值均 esc 转义，仅本函数生成的结构为标签。"""
@@ -611,14 +688,14 @@ def line_steps_evidence_html(plan):
                 continue
             seen_req.add(u)
     head = ('<tr>'
-            '<th style="width:13%%">目标线路</th>'
-            '<th style="width:24%%">所属规则</th>'
-            '<th style="width:32%%">告警关键字 / 样例</th>'
-            '<th style="width:13%%;text-align:center">未处理 / 处理中</th>'
+            '<th style="width:12%%">目标线路</th>'
+            '<th style="width:22%%">所属规则</th>'
+            '<th style="width:36%%">告警关键字 / 样例</th>'
+            '<th style="width:12%%;text-align:center">未处理 / 处理中</th>'
             '<th style="width:18%%">结论</th></tr>')
     out = []
     if rows:
-        out.append('<table>%s%s</table>' % (head, "".join(rows)))
+        out.append('<table class="ev-table">%s%s</table>' % (head, "".join(rows)))
     disp = plan.get("trace", {}).get("display") or []
     if disp:
         req_lines = "".join('<div style="margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#334155;word-break:break-all;line-height:1.6"><span style="color:#0369a1">GET</span> %s</div>' % e(u) for u in disp)
@@ -1598,6 +1675,20 @@ class Handler(BaseHTTPRequestHandler):
                 steps = conn.execute("SELECT * FROM exec_steps WHERE log_id=? ORDER BY seq", (log["id"],)).fetchall()
                 d = dict(log)
                 d["steps"] = [dict(s) for s in steps]
+                # 旧记录证据重渲染：从 ev 纯文本反解析，按最新证据样式生成 evh
+                try:
+                    tl = json.loads(d.get("timeline") or "[]")
+                    changed = False
+                    for it in tl:
+                        if it.get("ev") and not it.get("evh"):
+                            evd = parse_ev_to_evd(it["ev"])
+                            if evd["steps"]:
+                                it["evh"] = line_steps_evidence_html(evd)
+                                changed = True
+                    if changed:
+                        d["timeline"] = json.dumps(tl, ensure_ascii=False)
+                except Exception:
+                    pass
                 return self._send_json(d)
             m = re.match(r"^/api/task/(\d+)$", path)
             if m:
@@ -2312,10 +2403,10 @@ pre.out .err{color:#fca5a5}
 .tlx-ev summary:hover{color:var(--primary)}
 .rule-chip{background:var(--bg-hover);color:var(--text-secondary);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-size:12px;font-family:ui-monospace,Menlo,monospace;word-break:break-all;display:inline-block}
 /* 证据表格（弹窗内） */
-.tlx-panel-bd table{border-collapse:collapse;font-size:13px;width:100%;table-layout:fixed}
-.tlx-panel-bd th{padding:8px 12px;text-align:left;color:var(--text-muted);font-weight:550;border-bottom:1px solid var(--border);background:#fff}
-.tlx-panel-bd td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;word-break:break-word}
-.tlx-panel-bd tr:last-child td{border-bottom:none}
+.tlx-panel-bd table.ev-table{border-collapse:collapse;font-size:13px;width:100%;table-layout:fixed}
+.tlx-panel-bd table.ev-table th{padding:8px 12px;text-align:left;color:var(--text-muted);font-weight:550;border-bottom:1px solid var(--border);background:#fff}
+.tlx-panel-bd table.ev-table td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;word-break:break-word}
+.tlx-panel-bd table.ev-table tr:last-child td{border-bottom:none}
 .tlx-ev summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);padding:2px 0}
 .tl-ev summary:hover{color:var(--primary)}
 .tl-ev[open]{margin-bottom:2px}
