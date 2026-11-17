@@ -1691,9 +1691,6 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 
 /* ============ 主区 ============ */
 .main-container{flex:1;display:flex;flex-direction:column;min-width:0}
-.status-badge{display:flex;align-items:center;gap:6px;background:var(--success-bg);color:var(--success-d);padding:6px 12px;border-radius:20px;font-size:12px;font-weight:500}
-.status-dot{width:8px;height:8px;background:var(--success);border-radius:50%;animation:pulse 1.8s infinite}
-@keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
 .content-scroll{flex:1;overflow-y:auto;padding:24px 32px}
 .page-view{display:none;width:100%;max-width:1800px;margin:0 auto}
 .page-view.active{display:block;animation:fadeIn .2s ease}
@@ -1904,8 +1901,6 @@ details summary:hover{color:var(--primary)}
     <button data-g="system">系统设置</button>
   </nav>
   <div class="header-actions">
-    <div class="status-badge"><div class="status-dot"></div>运行中</div>
-    <button class="btn btn-secondary btn-sm" onclick="refreshNow()">刷新</button>
     <span class="ver-top" id="ver"></span>
     <button class="btn-logout" onclick="logout()"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="M16 17l5-5-5-5"/><path d="M21 12H9"/></svg>退出</button>
   </div>
@@ -1925,6 +1920,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid" id="stat"></div>
     <div class="card">
+      <div class="card-header"><h3>执行记录<span class="q" data-tip="每 30 秒自动刷新">?</span></h3><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()">刷新</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:70px">ID</th><th style="width:160px">时间</th><th style="width:80px">触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th style="width:70px">模式</th><th style="width:110px">状态</th><th>错误</th></tr></thead>
@@ -2209,7 +2205,6 @@ function refresh(p){
   if(p=="sites")loadSites();
   if(p=="settings")loadCfg()}
 // match / alerttest 为纯交互页，无需预加载
-function refreshNow(){refresh(CUR_PAGE)}
 
 // ---- 仪表盘 ----
 const STAT=[
