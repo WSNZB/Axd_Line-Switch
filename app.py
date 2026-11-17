@@ -318,7 +318,7 @@ def query_line_active(conn, gs_kw):
     if not token:
         raise RuntimeError("未配置 AIOps Token")
     result = {"pending": 0, "handling": 0, "titles": [], "requests": [], "raw": "",
-              "gs_label": gs_kw}
+              "display": [], "raws": [], "gs_label": gs_kw}
     for status_key, status in (("pending", 0), ("handling", 1)):
         sul = json.dumps([{"attr": "is_ignore", "search": [0], "operator": "="},
                           {"attr": "status", "search": [status], "operator": "="}],
@@ -326,6 +326,9 @@ def query_line_active(conn, gs_kw):
         params = {"gs": gs_kw, "offset": 0, "limit": 5, "search_unit_list": sul}
         full_url = api + "?" + urllib.parse.urlencode(params)
         result["requests"].append(full_url)
+        # 展示用：gs 与 search_unit_list 保持中文原文（不 URL 编码），便于人核对
+        result["display"].append("%s?offset=0&limit=5&gs=%s&search_unit_list=%s"
+                                 % (api.split("?")[0], gs_kw, sul))
         req = urllib.request.Request(full_url, headers={"token": token})
         with urllib.request.urlopen(req, timeout=20) as r:
             raw = r.read().decode("utf-8")
@@ -334,6 +337,7 @@ def query_line_active(conn, gs_kw):
             raise RuntimeError("AIOps 接口返回错误: %s" % str(d)[:160])
         data = d.get("data") or {}
         result[status_key] = data.get("count") or 0
+        result["raws"].append(raw[:600])
         if not result["raw"]:
             result["raw"] = raw[:3000]
         for it in (data.get("list") or [])[:3]:
@@ -506,18 +510,21 @@ def plan_switch(conn, title, site_id=None):
         st.update({"status": "active" if n else "clear", "gs": kw,
                    "pending": q["pending"], "handling": q["handling"],
                    "raw": q.get("raw") or "",
-                   "titles": q["titles"], "requests": q.get("requests") or []})
+                   "titles": q["titles"], "requests": q.get("requests") or [],
+                   "display": q.get("display") or [], "raws": q.get("raws") or []})
         line_cache[name] = st
         return st
 
     # trace 从本次判定的 steps 局部聚合（无线程间共享状态）
     def _mk_trace():
-        reqs, raw = [], ""
+        reqs, disp, raws, raw = [], [], [], ""
         for s in out["steps"]:
             reqs.extend(s.get("requests") or [])
+            disp.extend(s.get("display") or [])
+            raws.extend(s.get("raws") or [])
             if not raw and s.get("raw"):
                 raw = s["raw"]
-        return {"requests": reqs, "raw": raw}
+        return {"requests": reqs, "raw": raw, "display": disp, "raws": raws}
 
     for a in cands:
         tgs = parse_targets(a)
@@ -595,7 +602,7 @@ def line_steps_evidence_html(plan):
         if titles:
             kw += '<div style="color:#94a3b8;font-size:11px;margin-top:2px">样例: %s</div>' % e(titles)
         err = ('<div style="color:#b45309;font-size:11px">%s</div>' % e(str(s.get("error")))) if s.get("error") else ""
-        rows.append("<tr><td><b>%s</b></td><td>%s</td><td>%s%s</td><td style='text-align:center'>%s</td>"
+        rows.append("<tr><td><b>%s</b></td><td><span class='rule-chip'>%s</span></td><td>%s%s</td><td style='text-align:center'>%s</td>"
                     "<td style='color:%s;font-weight:600'>%s</td></tr>"
                     % (e(str(s.get("line") or "-")), e(str(s.get("action") or "-")),
                        kw, err, cnt, color, e(concl)))
@@ -603,24 +610,26 @@ def line_steps_evidence_html(plan):
             if u in seen_req:
                 continue
             seen_req.add(u)
-    head = ('<tr style="color:#64748b;font-weight:500">'
-            '<th style="padding:4px 10px 6px 0;text-align:left">目标线路</th>'
-            '<th style="padding:4px 10px 6px 0;text-align:left">所属规则</th>'
-            '<th style="padding:4px 10px 6px 0;text-align:left">告警关键字 / 样例</th>'
-            '<th style="padding:4px 10px 6px 0;text-align:center">未处理 / 处理中</th>'
-            '<th style="padding:4px 0 6px 0;text-align:left">结论</th></tr>')
+    head = ('<tr>'
+            '<th style="width:13%%">目标线路</th>'
+            '<th style="width:24%%">所属规则</th>'
+            '<th style="width:32%%">告警关键字 / 样例</th>'
+            '<th style="width:13%%;text-align:center">未处理 / 处理中</th>'
+            '<th style="width:18%%">结论</th></tr>')
     out = []
     if rows:
-        out.append('<table style="border-collapse:collapse;font-size:13px;width:100%%">%s%s</table>'
-                   % (head, "".join(rows)))
-    if seen_req:
-        req_lines = "".join('<div style="margin-top:3px;font-family:ui-monospace,Menlo,monospace;color:#64748b">→ %s</div>' % e(_fmt_req_human(u)) for u in seen_req)
-        out.append('<details style="margin-top:8px"><summary>查询请求 %d 条（实际发往 AIOps 的过滤条件）</summary><div style="padding:4px 0 2px;font-size:12px">%s</div></details>' % (len(seen_req), req_lines))
-    tr = plan.get("trace") or {}
-    if tr.get("raw"):
-        out.append('<details style="margin-top:4px"><summary>AIOps 原始响应（首次查询）</summary>'
-                   '<pre style="margin:4px 0 0;font-size:11px;color:#64748b;max-height:120px;overflow:auto;white-space:pre-wrap">%s</pre></details>'
-                   % e(tr["raw"][:3000]))
+        out.append('<table>%s%s</table>' % (head, "".join(rows)))
+    disp = plan.get("trace", {}).get("display") or []
+    if disp:
+        req_lines = "".join('<div style="margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#334155;word-break:break-all;line-height:1.6"><span style="color:#0369a1">GET</span> %s</div>' % e(u) for u in disp)
+        out.append('<div style="margin-top:14px;font-size:12px;font-weight:600;color:var(--text-muted)">实际发出的查询请求（%d 条）</div>'
+                   '<div style="margin-top:2px">%s</div>' % (len(disp), req_lines))
+    raws = plan.get("trace", {}).get("raws") or []
+    if raws:
+        blocks = "".join('<div style="margin-top:6px;font-size:11px;color:#94a3b8">响应 %d：</div>'
+                         '<pre style="margin:2px 0 0;background:#0f172a;color:#e2e8f0;font-size:11px;padding:10px 12px;border-radius:6px;max-height:110px;overflow:auto;white-space:pre-wrap;word-break:break-all">%s</pre>'
+                         % (i + 1, e(r)) for i, r in enumerate(raws))
+        out.append('<div style="margin-top:14px;font-size:12px;font-weight:600;color:var(--text-muted)">AIOps 原始响应（每条截取前 600 字）</div>%s' % blocks)
     return "".join(out)
 
 
@@ -2275,7 +2284,39 @@ pre.out .err{color:#fca5a5}
 .verdict.bad{background:var(--danger-bg);border-color:var(--danger-bd)}.verdict.bad .verdict-tag{color:var(--danger-d)}
 .verdict.warn{background:var(--warn-bg);border-color:var(--warn-bd)}.verdict.warn .verdict-tag{color:var(--warn-d)}
 .verdict.info .verdict-tag{color:var(--info-d)}
-.tl-ev summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);padding:2px 0}
+/* ---- 执行详情：图标时间线（参考稿结构） ---- */
+.tlx-card{background:var(--bg-card);border:1px solid var(--border);border-radius:10px;padding:22px 24px}
+.tlx-title{font-size:15px;font-weight:650;margin-bottom:20px;color:var(--text-main)}
+.tlx{display:flex;flex-direction:column}
+.tlx-item{display:flex;gap:16px}
+.tlx-ic{display:flex;flex-direction:column;align-items:center;flex-shrink:0;width:24px}
+.tlx-dot{width:24px;height:24px;border-radius:50%;background:#fff;border:2px solid var(--border2);color:var(--text-muted);display:flex;align-items:center;justify-content:center;z-index:2}
+.tlx-dot svg{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2.5;stroke-linecap:round;stroke-linejoin:round}
+.tlx-item.ok .tlx-dot{border-color:var(--success);color:var(--success-d);background:var(--success-bg)}
+.tlx-item.bad .tlx-dot{border-color:var(--danger);color:var(--danger-d);background:var(--danger-bg)}
+.tlx-item.warn .tlx-dot{border-color:var(--warn);color:var(--warn-d);background:var(--warn-bg)}
+.tlx-item.info .tlx-dot{border-color:var(--info);color:var(--info-d);background:var(--info-bg)}
+.tlx-line{width:2px;background:var(--border);flex:1;min-height:16px;margin:4px 0}
+.tlx-c{flex:1;min-width:0;padding-bottom:22px}
+.tlx-item:last-child .tlx-c{padding-bottom:0}
+.tlx-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:6px;flex-wrap:wrap}
+.tlx-hd h4{font-size:13.5px;font-weight:600;color:var(--text-main);word-break:break-word;flex:1;line-height:1.5}
+.tlx-ts{font-size:12px;color:var(--text-muted);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap}
+.tlx-bd{margin-top:8px}
+.tlx-panel{margin-top:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.tlx-panel-hd{background:var(--bg-subtle);padding:10px 16px;font-size:13px;font-weight:550;color:var(--text-secondary);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
+.tlx-panel-hd svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;flex-shrink:0;color:var(--text-muted)}
+.tlx-panel-bd{padding:16px;background:#fff;overflow-x:auto}
+.tlx-ev{margin-top:10px}
+.tlx-ev summary{cursor:pointer;font-size:12.5px;font-weight:600;color:var(--text-muted);padding:2px 0}
+.tlx-ev summary:hover{color:var(--primary)}
+.rule-chip{background:var(--bg-hover);color:var(--text-secondary);border:1px solid var(--border);padding:2px 6px;border-radius:4px;font-size:12px;font-family:ui-monospace,Menlo,monospace;word-break:break-all;display:inline-block}
+/* 证据表格（弹窗内） */
+.tlx-panel-bd table{border-collapse:collapse;font-size:13px;width:100%;table-layout:fixed}
+.tlx-panel-bd th{padding:8px 12px;text-align:left;color:var(--text-muted);font-weight:550;border-bottom:1px solid var(--border);background:#fff}
+.tlx-panel-bd td{padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top;word-break:break-word}
+.tlx-panel-bd tr:last-child td{border-bottom:none}
+.tlx-ev summary{cursor:pointer;font-size:12px;font-weight:600;color:var(--text-muted);padding:2px 0}
 .tl-ev summary:hover{color:var(--primary)}
 .tl-ev[open]{margin-bottom:2px}
 details{margin:8px 0}
@@ -2570,7 +2611,7 @@ details summary:hover{color:var(--primary)}
 </div></div>
 
 <!-- 日志详情 -->
-<div class="modal" id="mLog"><div class="box" style="width:900px">
+<div class="modal" id="mLog"><div class="box" style="width:1080px;max-width:96vw">
   <div class="mhd"><h3 id="mLogTitle">执行详情</h3><button class="mx" onclick="closeM('mLog')">✕</button></div>
   <div class="mbd" id="mLogBody"></div>
   <div class="mfoot"><button class="btn btn-secondary" onclick="closeM('mLog')">关闭</button></div>
@@ -2670,6 +2711,10 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     <td class="cell1">${l.dry_run?"演练":"切换"}</td>
     <td><span class="tag ${st[1]}">${st[0]}</span></td>
     <td class="cell1"><span class="err-text" style="max-width:none" title="${esc(l.error)}">${esc(l.error)||"-"}</span></td></tr>`}).join(""):'<tr><td colspan=10><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 12h4l3-8 5 16 3-8h4"/></svg>暂无执行记录</div></td></tr>'})}
+const TL_IC={ok:'<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>',
+  bad:'<svg viewBox="0 0 24 24"><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+  warn:'<svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
+  info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'};
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
@@ -2692,10 +2737,17 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
     <div class="meta-item"><span class="meta-label">耗时</span><span class="meta-value">${esc(l.started_at)} → ${esc((l.finished_at||"").slice(11))||"-"}</span></div>
   </div>`;
   let tl=[];try{tl=JSON.parse(l.timeline||"[]")}catch(e){}
-  if(tl.length)h+=`<div class="timeline-title">执行过程</div><div class="timeline">`+
-    tl.filter(t=>!(t.kind=="info"&&!t.evh&&!t.ev&&/^(收到告警|命中站点)/.test(t.text))).map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
-      <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div>
-      ${t.evh?`<details class="tl-ev"><summary>证据 · 线路体检<span class="q" data-tip="判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。">?</span></summary><div style="margin-top:8px;color:var(--text-main)">${t.evh}</div></details>`:(t.ev?`<details class="tl-ev"${t.kind=="bad"?" open":""}><summary>${t.step?"命令回显":"证据"}</summary><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"Evidence"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></details>`:"")}</div>`).join("")+`</div>`;
+  if(tl.length){
+    const items=tl.filter(t=>!(t.kind=="info"&&!t.evh&&!t.ev&&/^(收到告警|命中站点)/.test(t.text)));
+    h+=`<div class="tlx-card"><div class="tlx-title">执行过程</div><div class="tlx">`+
+      items.map((t,idx)=>{
+        const ic=TL_IC[t.kind]||TL_IC.info;
+        const nested=(t.evh?`<div class="tlx-panel"><div class="tlx-panel-hd"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>证据 · 线路体检<span class="q" data-tip="判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。">?</span></div><div class="tlx-panel-bd">${t.evh}</div></div>`
+          :(t.ev?`<details class="tlx-ev"${t.kind=="bad"?" open":""}><summary>${t.step?"命令回显":"证据"}</summary><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"Evidence"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></details>`:""));
+        return `<div class="tlx-item ${t.kind||""}">
+          <div class="tlx-ic"><div class="tlx-dot">${ic}</div>${idx<items.length-1?'<div class="tlx-line"></div>':''}</div>
+          <div class="tlx-c"><div class="tlx-hd"><h4>${esc(t.text)}</h4><span class="tlx-ts">${esc((t.ts||"").slice(11))}</span></div>
+          ${nested?'<div class="tlx-bd">'+nested+'</div>':''}</div></div>`}).join("")+`</div></div>`;}
   if(l.session_log)h+=term("会话原文",l.session_log,false);
   if((l.steps||[]).length&&!tl.some(t=>t.step))h+=`<div class="timeline-title">命令执行<span class="q" data-tip="旧版记录的回退展示">?</span></div>`+
     l.steps.map(s=>`<div class="accordion${s.ok?"":" open"}">
