@@ -2519,7 +2519,11 @@ function boot(){buildSideNav("monitor");refresh("dash");setInterval(()=>{loadSta
   const h=(location.hash||"").slice(1);
   if(PAGE_INFO[h])gotoGroup(PAGE_GROUP[h],h)}
 api("GET","/api/session").then(()=>{boot()}).catch(()=>{$("loginBox").classList.add("show")});
-document.querySelectorAll(".modal").forEach(m=>m.addEventListener("click",e=>{if(e.target===m)m.classList.remove("show")}));
+document.querySelectorAll(".modal").forEach(m=>{
+  let downOnMask=false;
+  m.addEventListener("mousedown",e=>{downOnMask=(e.target===m)});
+  m.addEventListener("click",e=>{if(downOnMask&&e.target===m)m.classList.remove("show");downOnMask=false});
+});
 // ---- 问号气泡：全局单例，自动避让视口边缘 ----
 (function(){
   const tip=$("qtip"), arrow=$("qarrow"), txt=$("qtipText");
