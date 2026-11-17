@@ -830,16 +830,16 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
     sess = DeviceSession(dev, password)
     login_note = ""
     try:
-        tl_append(conn, log_id, "登录设备 %s (%s://%s:%s)"
+        tl_append(conn, log_id, "登录设备：%s (%s://%s:%s)"
                   % (dev["name"], dev["protocol"], dev["host"], dev["port"]))
         sess.connect()
-        tl_append(conn, log_id, "设备登录成功，进入交互会话", "ok")
+        tl_append(conn, log_id, "登录成功", "ok")
         login_note = "\n".join(sess.log_lines)
         precheck_line = ""
         precheck_disp = ""
         # 切换前：查询当前生效线路（演练也执行，用于"只看不切"）
         if (dev["status_command"] or "").strip():
-            tl_append(conn, log_id, "查询当前生效线路：执行 %s" % dev["status_command"].strip())
+            tl_append(conn, log_id, "查询当前生效线路")
             try:
                 out = sess.send_cmd(dev["status_command"].strip())
                 emap = site_line_ip_map(conn, dev["site_id"])
@@ -847,28 +847,28 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
                 precheck_disp = parse_current_line(out, "", dev["current_regex"], with_ip=True, extra_map=emap)
                 login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
-                tl_append(conn, log_id, "当前生效线路: %s" % (precheck_disp or "未识别(见步骤回显)"))
+                tl_append(conn, log_id, "当前生效线路：%s" % (precheck_disp or "未识别"))
             except Exception as e:
                 login_note += "\n[切换前] 状态查询失败: %s" % e
-                tl_append(conn, log_id, "当前线路查询失败: %s（不阻断，继续执行）" % e, "warn")
+                tl_append(conn, log_id, "当前线路查询失败：%s" % e, "warn")
         conn.execute("UPDATE exec_logs SET precheck_line=? WHERE id=?", (precheck_disp, log_id))
         conn.commit()
         if dry_run:
-            tl_append(conn, log_id, "演练模式：验证登录与线路查询链路，不下发切换命令", "ok")
+            tl_append(conn, log_id, "演练模式：不下发切换命令", "ok")
             return True, "", login_note + "\n[dry-run] 登录成功，未下发切换命令", precheck_line, True, ""
         # 条件判断：当前生效线路必须是故障线路，否则无需切换
         if require_line and precheck_line:
             req = [x.strip() for x in require_line.split(",") if x.strip()]
             if req and precheck_line not in req:
-                tl_append(conn, log_id, "当前生效线路 %s 非故障线路（%s），无需切换"
+                tl_append(conn, log_id, "当前线路 %s 非故障线路（%s），跳过"
                           % (precheck_disp or precheck_line, "/".join(req)), "warn")
                 return (True, "", login_note + "\n[跳过] 当前生效线路为 %s，非故障线路 %s，无需切换"
                         % (precheck_disp or precheck_line, "/".join(req)), precheck_line, True,
                         "当前生效线路为 %s（非故障线路 %s），无需切换" % (precheck_disp or precheck_line, "/".join(req)))
             if req:
-                tl_append(conn, log_id, "确认满足切换条件：当前正运行在故障线路上，开始下发切换命令（共 %d 条）" % len(cmds), "ok")
+                tl_append(conn, log_id, "满足切换条件，下发切换命令（%d 条）" % len(cmds), "ok")
         else:
-            tl_append(conn, log_id, "开始执行切换命令块（共 %d 条）" % len(cmds), "ok")
+            tl_append(conn, log_id, "下发切换命令（%d 条）" % len(cmds), "ok")
         main_outs = []
         for i, cmd in enumerate(cmds, 1):
             seq_row = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
@@ -888,15 +888,15 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                          (log_id, i, cmd, (out or err)[:8000], (sess.last_raw or "")[:20000], ok, now()))
             conn.commit()
             if not ok:
-                tl_append(conn, log_id, "第 %d/%d 条命令失败: %s" % (i, len(cmds), cmd), "bad")
+                tl_append(conn, log_id, "命令失败（%d/%d）：%s" % (i, len(cmds), cmd), "bad")
                 return (False, "第 %d 条命令失败: %s | %s" % (i, cmd, err),
                         login_note, precheck_line, False, "")
-        tl_append(conn, log_id, "切换命令全部下发完成（%d/%d 成功）" % (len(cmds), len(cmds)), "ok")
+        tl_append(conn, log_id, "切换命令下发完成（%d/%d）" % (len(cmds), len(cmds)), "ok")
         # 切换后验证：用独立会话重新登录执行（切换命令块的 quit 可能已断开会话）
         verify_ok = True
         verr = ""
         if expect_kws and not verify_cmds:
-            tl_append(conn, log_id, "验证切换结果：在命令回显中检查期望内容 %s" % "、".join(expect_kws))
+            tl_append(conn, log_id, "验证：检查命令回显中的期望内容 %s" % "、".join(expect_kws))
             # 未配置验证命令块：直接在切换命令的回显中查找期望内容（省去重新登录）
             vtext = "\n".join(main_outs)
             missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
@@ -905,12 +905,12 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 verr = ("切换命令已下发，但命令回显中未找到期望内容 %s"
                         "（切换前线路: %s，请检查命令块输出或改在验证命令块配置查询命令）"
                         % (",".join(missing), precheck_disp or precheck_line or "未知"))
-                tl_append(conn, log_id, "验证未通过：回显中未找到 %s" % "、".join(missing), "bad")
+                tl_append(conn, log_id, "验证未通过：回显未包含 %s" % "、".join(missing), "bad")
             else:
-                tl_append(conn, log_id, "验证通过：期望内容已出现在回显中", "ok")
+                tl_append(conn, log_id, "验证通过", "ok")
         elif verify_cmds or expect_kws:
-            tl_append(conn, log_id, "验证切换结果：重新登录设备执行验证命令" if verify_cmds
-                      else "验证切换结果：重新登录设备检查期望内容")
+            tl_append(conn, log_id, "验证：重新登录设备执行验证命令" if verify_cmds
+                      else "验证：重新登录设备检查期望内容")
             vsess = None
             try:
                 vsess = DeviceSession(dev, password)
@@ -933,7 +933,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                     if not vok:
                         verify_ok = False
                         verr = "验证命令执行失败: %s | %s" % (vcmd, vout[-150:])
-                        tl_append(conn, log_id, "验证命令失败: %s" % vcmd, "bad")
+                        tl_append(conn, log_id, "验证命令失败：%s" % vcmd, "bad")
                 if verify_ok and expect_kws:
                     vtext = "\n".join(vout_all)
                     missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
@@ -942,15 +942,14 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                         verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
                                 "（切换前线路: %s，可能路由未收敛或切换失败）"
                                 % (",".join(missing), precheck_disp or precheck_line or "未知"))
-                        tl_append(conn, log_id, "验证未通过：路由表回显中未找到 %s（可能路由未收敛）"
-                                  % "、".join(missing), "bad")
+                        tl_append(conn, log_id, "验证未通过：路由表未包含 %s" % "、".join(missing), "bad")
                     else:
-                        tl_append(conn, log_id, "验证通过：路由表已指向目标线路（%s）"
+                        tl_append(conn, log_id, "验证通过：路由表指向目标线路（%s）"
                                   % "、".join(expect_kws), "ok")
             except Exception as e:
                 verify_ok = False
                 verr = "验证会话登录失败: %s" % e
-                tl_append(conn, log_id, "验证会话登录失败: %s" % e, "bad")
+                tl_append(conn, log_id, "验证会话登录失败：%s" % e, "bad")
             finally:
                 if vsess:
                     # 验证会话的完整收发并入主会话原文
@@ -1006,7 +1005,7 @@ def execute_action(log_id):
                     require_line=(log["source_line"] or "")))
         except Exception as e:
             ok, err, note, precheck_line, verify_ok, skip_reason = False, str(e), "", "", False, ""
-            tl_append(conn, log_id, "执行异常: %s" % e, "bad")
+            tl_append(conn, log_id, "执行异常：%s" % e, "bad")
         if skip_reason:
             status = "skipped"
             err = skip_reason
@@ -1016,8 +1015,8 @@ def execute_action(log_id):
             status = "verify_failed"
         else:
             status = "failed"
-        _FINISH_TXT = {"success": "任务完成：切换成功", "verify_failed": "任务结束：命令已下发但验证未通过",
-                       "failed": "任务失败终止", "skipped": "任务结束：条件不满足未切换"}
+        _FINISH_TXT = {"success": "任务完成", "verify_failed": "任务结束：验证未通过",
+                       "failed": "任务失败", "skipped": "任务结束：未切换"}
         tl_append(conn, log_id, _FINISH_TXT.get(status, "任务结束: %s" % status),
                   "ok" if status == "success" else ("bad" if status in ("failed", "verify_failed") else "warn"))
         conn.execute("UPDATE exec_logs SET status=?, error=?, matched_note=?, finished_at=? WHERE id=?",
@@ -1085,7 +1084,7 @@ def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
     tl = list(init_tl or [])
     mode = "演练" if dry_run else ("回切" if rollback else "切换")
     tl.append({"ts": now(), "kind": "info",
-               "text": "任务入队，等待执行（模式: %s，设备: %s）" % (mode, dev["name"])})
+               "text": "任务入队（模式：%s，设备：%s）" % (mode, dev["name"])})
     cur = conn.execute(
         "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,alarm_title,"
         "dry_run,rollback,status,precheck_line,source_line,decision_note,started_at,timeline) "
@@ -1283,7 +1282,7 @@ class Handler(BaseHTTPRequestHandler):
                     return self._send_json({"matched": False, "error": "缺少告警标题 title"}, 400)
                 hits = match_actions(conn, title)
                 t_recv = now()
-                init_tl = [{"ts": t_recv, "kind": "info", "text": "收到告警回调：%s" % title}]
+                init_tl = [{"ts": t_recv, "kind": "info", "text": "收到告警：%s" % title}]
                 if not hits:
                     init_tl.append({"ts": now(), "kind": "warn", "text": "未命中任何启用中的动作，流程结束"})
                     return self._send_json({"matched": False, "title": title})
@@ -1291,23 +1290,21 @@ class Handler(BaseHTTPRequestHandler):
                 site_row = conn.execute("SELECT name FROM sites WHERE id=?", (act["site_id"] or 0,)).fetchone() \
                     if act["site_id"] else None
                 init_tl.append({"ts": now(), "kind": "ok",
-                                "text": "命中动作「%s」（站点: %s，命中 %d 个动作取第一个）"
+                                "text": "命中动作：%s（站点：%s）"
                                 % (act["name"], site_row["name"] if site_row else "未关联", len(hits))})
                 dry_run = 1 if str(body.get("dry_run", "")).lower() in ("1", "true", "yes") else 0
                 # 站点线路互斥判定：多条线路同时告警 / 无法确认故障线路 → 不切换
                 if conn.execute("SELECT 1 FROM lines WHERE site_id=? AND enabled=1 LIMIT 1",
                                 (act["site_id"] or 0,)).fetchone():
                     init_tl.append({"ts": now(), "kind": "info",
-                                    "text": "开始查询该站点其它线路近 %s 分钟内是否存在活跃告警（互斥判定）"
+                                    "text": "互斥判定：查询站点近 %s 分钟活跃告警"
                                     % (kv_get(conn, "active_window_min", "30") or 30)})
                 allow, reason, decision = judge_site_alarms(conn, title, act)
                 if decision.get("fault_lines"):
                     init_tl.append({"ts": now(), "kind": "info",
-                                    "text": "识别故障线路: %s；站点其它活跃告警线路: %s"
+                                    "text": "故障线路：%s；活跃告警线路：%s"
                                     % ("、".join(decision["fault_lines"]),
                                        "、".join(decision.get("active_lines") or []) or "无")})
-                if decision.get("note"):
-                    init_tl.append({"ts": now(), "kind": "info", "text": decision["note"]})
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
                 base = {"matched": True, "title": title,
                         "action": {"id": act["id"], "name": act["name"], "site_id": act["site_id"]},
@@ -1333,7 +1330,7 @@ class Handler(BaseHTTPRequestHandler):
                     base.update({"task_id": None, "executed": False, "skip_reason": reason,
                                  "skip_reason_code": "site_alarm_condition"})
                     return self._send_json(base)
-                init_tl.append({"ts": now(), "kind": "ok", "text": "互斥判定通过，进入切换流程"})
+                init_tl.append({"ts": now(), "kind": "ok", "text": "互斥判定通过"})
                 log_id, skip = submit_action(conn, act, "api", title, dry_run=dry_run,
                                              source_line=",".join(decision.get("fault_lines") or []),
                                              decision_note=decision.get("note", ""), init_tl=init_tl)
@@ -1532,8 +1529,7 @@ class Handler(BaseHTTPRequestHandler):
                     s.close()
                     note = s.log_lines
                     if line and line_disp == line and re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", line):
-                        note = note + ["提示: 下一跳 %s 未匹配到线路名——请在「站点管理→线路」里把某条线路的"
-                                       "「下一跳IP」填为 %s（或告警关键词含该 IP），并建议给设备关联所属站点" % (line, line)]
+                        note = note + ["下一跳 %s 未匹配线路名，请在站点线路中配置下一跳IP" % line]
                     return {"ok": True, "current_line": line_disp or "未识别",
                             "command": scmd, "note": note, "banner": out[:800]}
                 ver = ""
@@ -1711,7 +1707,6 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .card{background:var(--bg-card);border-radius:8px;border:1px solid var(--border);box-shadow:0 1px 3px rgba(0,0,0,.02);margin-bottom:24px}
 .card-header{padding:16px 24px;border-bottom:1px solid var(--border);display:flex;align-items:center;justify-content:space-between;gap:10px}
 .card-header h3{font-size:15px;font-weight:600}
-.card-header .sub{font-size:12px;color:var(--text-muted);font-weight:400;margin-left:8px}
 .card-body{padding:24px}
 .card-body.tight{padding:18px 24px}
 
@@ -1832,7 +1827,6 @@ pre.out .err{color:#fca5a5}
 .accordion.open .accordion-content{max-height:4000px;transition:max-height .5s ease-in}
 .accordion-content .plain{padding:16px;border-top:1px solid var(--border);font-size:13px;color:var(--text-muted);white-space:pre-wrap;line-height:1.7;word-break:break-all}
 .terminal-wrapper{padding:16px;border-top:1px solid var(--border)}
-.command-bar{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
 .tag-ok{background:var(--success-bg);color:var(--success);border:1px solid #a7f3d0;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}
 .tag-fail{background:var(--danger-bg);color:var(--danger);border:1px solid #fecaca;padding:2px 8px;border-radius:4px;font-size:12px;font-weight:600}
 .command-text{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:13px;color:var(--text-main);font-weight:500;background:#f1f5f9;padding:2px 8px;border-radius:4px;word-break:break-all}
@@ -1863,11 +1857,6 @@ pre.out .err{color:#fca5a5}
 details{margin:8px 0}
 details summary{cursor:pointer;color:var(--text-muted);font-size:12.5px;padding:4px 0;outline:none}
 details summary:hover{color:var(--primary)}
-.step{border:1px solid var(--border);border-radius:8px;padding:12px 16px;margin-top:10px;background:#fcfcfd}
-.step .sh{display:flex;align-items:center;gap:10px;font-size:13px}
-.step .sh code{background:#f1f5f9;border:1px solid var(--border);padding:2px 8px;border-radius:5px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace}
-.log-meta{display:flex;flex-wrap:wrap;gap:8px 24px;background:#f8fafc;border:1px solid var(--border);border-radius:8px;padding:12px 16px;font-size:12.5px;color:var(--text-muted);margin-bottom:14px}
-.log-meta b{color:var(--text-main);font-weight:600}
 .err-banner{color:var(--danger-d);background:var(--danger-bg);border:1px solid #fecaca;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px}
 .hit-ok{background:var(--success-bg);color:var(--success-d);border:1px solid #a7f3d0;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:13px;line-height:1.6}
 .hit-bad{background:var(--danger-bg);color:var(--danger-d);border:1px solid #fecaca;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:13px}
@@ -1947,7 +1936,6 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid" id="stat"></div>
     <div class="card">
-      <div class="card-header"><h3>执行记录<span class="q" data-tip="点击任意行查看每条命令回显与会话原文；列表每 30 秒自动刷新">?</span></h3></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:70px">ID</th><th style="width:160px">时间</th><th style="width:80px">触发</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th style="width:70px">模式</th><th style="width:110px">状态</th><th>错误</th></tr></thead>
@@ -1955,27 +1943,30 @@ details summary:hover{color:var(--primary)}
     </div>
   </div>
 
-  <!-- 切换动作 -->
-  <div class="page-view" id="p-actions">
+  <!-- 匹配预检 -->
+  <div class="page-view" id="p-match">
     <div class="card">
-      <div class="card-header"><h3>匹配预检<span class="q" data-tip="确认「告警标题 ↔ 站点 / 线路」对应关系是否正确">?</span></h3></div>
       <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
         <div class="toolbar-row">
           <div class="input-group">
-            <input id="mt_title" placeholder="粘贴一条真实告警标题，如：【ICMP中断】41.243.21.170-华刚卢本-Airtel" onkeydown="if(event.key=='Enter')matchTest()">
+            <input id="mt_title" placeholder="输入告警标题，如 【ICMP中断】41.243.21.170-华刚卢本-Airtel" onkeydown="if(event.key=='Enter')matchTest()">
             <button class="btn btn-primary" onclick="matchTest()">检测规则</button>
           </div>
         </div>
         <div id="mt_out"></div>
         <div class="action-buttons" style="border-top:1px dashed var(--border);padding-top:16px">
           <select id="rp_days"><option value="1">近 1 天</option><option value="7" selected>近 7 天</option><option value="14">近 14 天</option><option value="30">近 30 天</option></select>
-          <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" title="校验现有规则能覆盖哪些真实告警；未命中清单用于补充关键词">?</span></button>
+          <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" data-tip="以真实告警校验规则覆盖情况；未命中标题用于补充关键词">?</span></button>
         </div>
         <div id="rp_out"></div>
       </div>
     </div>
+  </div>
+
+  <!-- 切换动作 -->
+  <div class="page-view" id="p-actions">
     <div class="card">
-      <div class="card-header"><h3>切换动作规则<span class="q" data-tip="告警标题 → 动作匹配：包含模式填逗号分隔关键词（全部包含才命中，如 站点A,4G）；正则模式填单个正则。&#10;命令块中 # 开头行为注释，执行时自动跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
+      <div class="card-header"><h3>动作规则<span class="q" data-tip="包含模式：逗号分隔关键词，全部包含才命中；正则模式：单个正则。&#10;命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建动作</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">动作名 / 设备</th><th style="width:90px">匹配方式</th>
         <th>关键词 / 正则</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
@@ -1986,7 +1977,7 @@ details summary:hover{color:var(--primary)}
   <!-- 设备管理 -->
   <div class="page-view" id="p-devices">
     <div class="card">
-      <div class="card-header"><h3>设备管理</h3><button class="btn btn-primary" onclick="editDevice(0)">＋ 新建设备</button></div>
+      <div class="card-header"><h3>设备列表</h3><button class="btn btn-primary" onclick="editDevice(0)">＋ 新建设备</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">设备名 / 地址</th><th style="width:110px">站点</th>
         <th style="width:80px">协议</th><th style="width:100px">账号</th><th style="width:70px">超时</th>
@@ -1998,7 +1989,7 @@ details summary:hover{color:var(--primary)}
   <!-- 站点管理 -->
   <div class="page-view" id="p-sites">
     <div class="card">
-      <div class="card-header"><h3>站点管理<span class="q" data-tip="线路关键词用于判定「故障线路」与「多条线路同时告警」">?</span></h3><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
+      <div class="card-header"><h3>站点列表</h3><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:220px">站点名称</th><th>线路</th><th style="width:220px">备注</th><th style="width:220px;text-align:right">操作</th></tr></thead>
       <tbody id="sitetb"></tbody></table></div>
@@ -2008,21 +1999,23 @@ details summary:hover{color:var(--primary)}
   <!-- 全局设置 -->
   <div class="page-view" id="p-settings">
     <div class="card">
-      <div class="card-header"><h3>全局设置<span class="q" data-tip="告警回调接口：POST /api/alert&#10;Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;响应含 matched / task_id / skip_reason">?</span></h3></div>
       <div class="card-body">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
-        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调时带 X-API-Token 请求头">?</span></label><div class="ctl"><input id="s_token"></div></div>
+        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}">?</span></label><div class="ctl"><input id="s_token"></div></div>
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
-        <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改（用于匹配回放/互斥判定）"></div></div>
-        <div class="kv"><label>活跃告警判定窗口(分钟)<span class="q" data-tip="收到告警时，查近 N 分钟内未恢复的告警，判断其它线路是否也异常">?</span></label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:220px"></div></div>
+        <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改"></div></div>
+        <div class="kv"><label>活跃告警判定窗口(分钟)<span class="q" data-tip="收到告警时查询窗口内未恢复告警，判断其它线路是否同时告警">?</span></label><div class="ctl"><input id="s_window" type="number" placeholder="30" style="max-width:220px"></div></div>
         <button class="btn btn-primary" onclick="saveCfg()">保存设置</button>
       </div>
     </div>
+  </div>
+
+  <!-- 回调测试 -->
+  <div class="page-view" id="p-alerttest">
     <div class="card">
-      <div class="card-header"><h3>告警回调测试</h3></div>
       <div class="card-body">
-        <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如：站点A-4G专线中断"></div></div>
+        <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如 站点A-4G专线中断"></div></div>
         <div style="margin-left:226px"><button class="btn btn-secondary" onclick="testAlert()">发送测试</button></div>
         <pre class="out" id="t_out" style="display:none;margin-top:14px"></pre>
       </div>
@@ -2078,7 +2071,6 @@ details summary:hover{color:var(--primary)}
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mAct')">取消</button>
     <span class="sp"></span>
-    <button class="btn btn-warning" onclick="execAction(false)">保存前不执行</button>
     <button class="btn btn-primary" onclick="saveAction()">保存</button>
   </div>
 </div></div>
@@ -2192,13 +2184,15 @@ function doLogin(){api("POST","/api/login",{password:$("lg_pwd").value}).then(()
 function logout(){api("POST","/api/logout").then(()=>location.reload())}
 
 // ---- 导航：顶部一级 + 左侧二级 ----
-const PAGE_INFO={dash:["执行记录","切换任务执行历史与结果"],actions:["切换动作","配置告警匹配规则与执行命令"],
-  devices:["设备管理","站点设备连接与线路映射"],sites:["站点管理","站点与线路配置"],settings:["全局设置","接口、令牌与回调参数"]};
+const PAGE_INFO={dash:["执行记录","切换任务执行历史与结果"],match:["匹配预检","校验告警标题与动作规则的对应关系"],
+  actions:["切换动作","动作规则与命令块维护"],
+  devices:["设备管理","站点设备连接与线路识别"],sites:["站点管理","站点与线路配置"],
+  settings:["全局设置","接口、令牌与判定参数"],alerttest:["回调测试","模拟告警回调验证链路"]};
 const NAV_GROUPS={
   monitor:{title:"监 控",items:[["dash","执行记录",'<path d="M3 12h4l3-8 5 16 3-8h4"/>']]},
-  config:{title:"切换配置",items:[["actions","切换动作",'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>']]},
+  config:{title:"切换配置",items:[["match","匹配预检",'<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>'],["actions","切换动作",'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>']]},
   resource:{title:"资源管理",items:[["devices","设备管理",'<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/>'],["sites","站点管理",'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>']]},
-  system:{title:"系 统",items:[["settings","全局设置",'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>']]}};
+  system:{title:"系 统",items:[["settings","全局设置",'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'],["alerttest","回调测试",'<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>']]}};
 let CUR_PAGE="dash";
 function buildSideNav(g){
   const grp=NAV_GROUPS[g];
@@ -2226,6 +2220,7 @@ function refresh(p){
   if(p=="devices")loadDevices();
   if(p=="sites")loadSites();
   if(p=="settings")loadCfg()}
+// match / alerttest 为纯交互页，无需预加载
 function refreshNow(){refresh(CUR_PAGE)}
 
 // ---- 仪表盘 ----
@@ -2268,7 +2263,6 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   if(tl.length)h+=`<div class="timeline-title">执行过程</div><div class="timeline">`+
     tl.map(t=>`<div class="tl-item ${t.kind||""}"><div class="tl-dot"></div>
       <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div></div>`).join("")+`</div>`;
-  if(l.decision_note)h+=`<div class="hint" style="margin-bottom:16px">判定依据：${esc(l.decision_note)}</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
   if(l.matched_note)h+=term("登录过程摘要",l.matched_note,false);
   if(l.session_log)h+=term("会话原文（登录 banner + 全部收发，排障用）",l.session_log,false);
@@ -2300,7 +2294,7 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
       <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id},false,true)">回切</button>
       <button class="btn btn-sm btn-secondary" onclick="editAction(${x.id})">编辑</button>
       <button class="btn btn-sm btn-danger" onclick="delAction(${x.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无动作，点击右上角「新建动作」</div></td></tr>'})}
+    '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无动作</div></td></tr>'})}
 function fillSelect(sel,list,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
   list.map(x=>`<option value="${x.id}">${esc(labelFirst?x.name:x.name+(x.host?" ("+x.host+")":""))}</option>`).join("")}
 function editAction(id){const a=DATA.actions.find(x=>x.id==id)||{};
@@ -2326,7 +2320,7 @@ function delAction(id){if(confirm("确认删除动作 #"+id+"？"))api("DELETE",
 function execAction(id,dry,rb){if(dry===false&&id===0)return;
   const q=dry?"?dry_run=1":(rb?"?rollback=1":"");
   api("POST","/api/exec/"+id+q,{}).then(r=>{
-    showToast(r.executed?("已提交执行，任务 #"+r.task_id+"，稍后在执行记录查看"):("未执行: "+r.skip_reason),!r.executed);
+    showToast(r.executed?("已提交执行（任务 #"+r.task_id+"）"):("未执行："+r.skip_reason),!r.executed);
     loadLogs()}).catch(e=>showToast("提交失败: "+e.message,1))}
 
 // ---- 设备 ----
@@ -2342,7 +2336,7 @@ function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
       <button class="btn btn-sm btn-warning" onclick="testDeviceByIdStatus(${x.id})">查线路</button>
       <button class="btn btn-sm btn-secondary" onclick="editDevice(${x.id})">编辑</button>
       <button class="btn btn-sm btn-danger" onclick="delDevice(${x.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=7><div class="empty"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/></svg>暂无设备，点击右上角「新建设备」</div></td></tr>'})}
+    '<tr><td colspan=7><div class="empty"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/></svg>暂无设备</div></td></tr>'})}
 function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
   api("GET","/api/sites").then(s=>{DATA.sites=s;fillSelect("d_site",s,true)});
   $("d_id").value=d.id||"";$("d_name").value=d.name||"";$("d_host").value=d.host||"";
@@ -2367,14 +2361,14 @@ function saveDevice(){const b=devBody();
     closeM("mDev");showToast("设备已保存");loadDevices()})}
 function delDevice(id){if(confirm("确认删除设备 #"+id+"？"))api("DELETE","/api/devices/"+id).then(()=>{showToast("已删除");loadDevices()})}
 function _showTest(r,el){const o=$(el);o.style.display="block";
-  o.textContent=r.ok?("连接成功 ✓\n"+(r.note||[]).join("\n")+(r.banner?"\n"+r.banner:""))
+  o.textContent=r.ok?("连接成功\n"+(r.note||[]).join("\n")+(r.banner?"\n"+r.banner:""))
     :("失败 ✗\n"+(r.error||"")+(r.session_tail?"\n\n--- ssh 会话尾部 ---\n"+r.session_tail:""))}
 function testDevice(){const b=devBody();
   if(b.id){api("POST","/api/devices/"+b.id+"/test",{}).then(r=>_showTest(r,"d_test"))}
   else{api("POST","/api/devices",b).then(r=>{b.id=r.id;$("d_id").value=r.id;
     api("POST","/api/devices/"+r.id+"/test",{}).then(t=>_showTest(t,"d_test"))})}}
 function testDeviceById(id){api("POST","/api/devices/"+id+"/test",{}).then(r=>{
-  if(r.ok)showToast("连接成功 ✓");else showToast("连接失败: "+(r.error||""),1)})}
+  if(r.ok)showToast("连接成功");else showToast("连接失败: "+(r.error||""),1)})}
 function queryDeviceLine(){const id=$("d_id").value;if(!id)return showToast("请先保存设备",1);
   api("POST","/api/devices/"+id+"/status",{}).then(r=>{
     const o=$("d_test");o.style.display="block";
@@ -2397,7 +2391,7 @@ function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines"
     <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="editSite(${x.id})">编辑</button>
     <button class="btn btn-sm btn-warning" onclick="manageLines(${x.id},'${esc(x.name)}')">线路</button>
     <button class="btn btn-sm btn-danger" onclick="delSite(${x.id})">删除</button></div></td></tr>`}).join(""):
-    '<tr><td colspan=4><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>暂无站点，点击右上角「新建站点」</div></td></tr>'})}
+    '<tr><td colspan=4><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>暂无站点</div></td></tr>'})}
 function editSite(id){const s=DATA.sites.find(x=>x.id==id)||{};
   $("si_id").value=s.id||"";$("si_name").value=s.name||"";$("si_rm").value=s.remark||"";
   $("mSiteTitle").textContent=s.id?"编辑站点":"新建站点";$("mSite").classList.add("show")}
@@ -2418,7 +2412,7 @@ function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
     <td>${l.priority}</td>
     <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=6><div class="empty">暂无线路，请添加（如 Airtel / Vodacom / 4G）</div></td></tr>'})}
+    '<tr><td colspan=6><div class="empty">暂无线路</div></td></tr>'})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
   alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim(),priority:+$("l_pri").value||1};
   if(!b.name)return showToast("线路名必填",1);
@@ -2442,9 +2436,8 @@ function saveCfg(){const b={api_token:$("s_token").value.trim(),global_cooldown:
 function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
   api("POST","/api/match/test",{title:t}).then(r=>{
     const o=$("mt_out");
-    if(!r.matched){o.innerHTML=`<div class="hit-bad">✗ 未命中任何动作，需补充关键词或检查标题写法</div>`;return}
-    o.innerHTML=r.hits.map(h=>`<div class="hit-ok">✓ 命中 <b>${esc(h.action_name)}</b>（站点 ${esc(h.site||"-")} / 设备 ${esc(h.device?h.device.name:"-")}）
-      <span style="opacity:.75">${esc(h.reason)}；将执行 ${h.command_lines} 条命令</span></div>`).join("")})}
+    if(!r.matched){o.innerHTML=`<div class="hit-bad">未命中任何动作</div>`;return}
+    o.innerHTML=r.hits.map(h=>`<div class="hit-ok">命中 <b>${esc(h.action_name)}</b>（站点 ${esc(h.site||"-")} / 设备 ${esc(h.device?h.device.name:"-")} / ${h.command_lines} 条命令）</div>`).join("")})}
 function replayRun(){const d=+$("rp_days").value;
   $("rp_out").innerHTML='<div style="color:var(--text-muted);padding:6px 0">正在拉取 AIOps 告警并回放，请稍候…</div>';
   api("POST","/api/match/replay",{days:d}).then(r=>{
@@ -2467,7 +2460,7 @@ function testAlert(){const t=$("t_title").value.trim();if(!t)return showToast("�
     o.textContent=JSON.stringify(r,null,2);loadLogs()})}
 
 // ---- 启动 ----
-const PAGE_GROUP={dash:"monitor",actions:"config",devices:"resource",sites:"resource",settings:"system"};
+const PAGE_GROUP={dash:"monitor",match:"config",actions:"config",devices:"resource",sites:"resource",settings:"system",alerttest:"system"};
 function boot(){buildSideNav("monitor");refresh("dash");setInterval(()=>{loadStats();loadLogs()},30000);
   const h=(location.hash||"").slice(1);
   if(PAGE_INFO[h])gotoGroup(PAGE_GROUP[h],h)}
