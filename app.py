@@ -2264,8 +2264,8 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
       <div class="tl-text">${esc(t.text)}</div><div class="tl-ts">${esc((t.ts||"").slice(11))}</div>
       ${t.ev?`<div class="tl-ev"><span class="tl-ev-t" onclick="this.parentElement.classList.toggle('open')">证据</span><pre class="out">${esc(t.ev)}</pre></div>`:""}</div>`).join("")+`</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
-  if(l.session_log&&!(l.steps&&l.steps.length))h+=term("会话原文（登录收发记录）",l.session_log,true);
-  if((l.steps||[]).length)h+=`<div class="timeline-title">命令执行</div>`;
+  if(l.session_log)h+=term("会话原文",l.session_log,false);
+  if((l.steps||[]).length)h+=`<div class="timeline-title">命令执行<span class="q" data-tip="本次任务实际下发的全部命令：切换命令块中的每一条 + 验证命令块中的查询命令。&#10;查线路用的路由表在上方时间线「当前生效线路」证据中。">?</span></div>`;
   h+=(l.steps||[]).map(s=>`<div class="accordion${s.ok?"":" open"}">
     <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
       <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="${s.ok?"tag-ok":"tag-fail"}">${s.ok?"OK":"FAIL"}</span><span class="command-text">${esc(s.command)}</span></span>${ARROW}</div>
