@@ -2060,7 +2060,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .top-nav button{border:none;background:none;color:var(--sidebar-text);font-size:14px;padding:9px 20px;border-radius:6px;cursor:pointer;transition:all .2s;position:relative}
 .top-nav button:hover{color:#fff;background:rgba(255,255,255,.06)}
 .top-nav button.active{color:#fff;font-weight:600;background:var(--sidebar-active-bg)}
-.top-nav button.active::after{content:"";position:absolute;left:20px;right:20px;bottom:-11px;height:2px;border-radius:2px;background:linear-gradient(90deg,#818cf8,#6366f1)}
+.top-nav button.active::after{content:"";position:absolute;left:20px;right:20px;bottom:-11px;height:2px;border-radius:2px;background:var(--primary)}
 .header-actions{margin-left:auto;display:flex;align-items:center;gap:14px}
 .ver-top{font-size:11px;color:#8b98ab;white-space:nowrap}
 .btn-logout{display:flex;align-items:center;gap:6px;padding:7px 14px;background:transparent;color:var(--sidebar-text);border:1px solid rgba(255,255,255,.12);border-radius:6px;font-size:12px;cursor:pointer;transition:all .2s;white-space:nowrap}
@@ -2165,7 +2165,7 @@ tr.row-off td{opacity:.55}
 tr.row-off td .tag{filter:saturate(.4)}
 ,input:focus-visible,select:focus-visible,tr.clickable:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-.stat-ic{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.stat-ic{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg-hover);color:var(--text-muted)}
 .stat-ic svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .stat-card b{font-size:26px;font-weight:750;display:block;line-height:1.2;font-variant-numeric:tabular-nums}
 .stat-card span{color:var(--text-muted);font-size:12.5px}
@@ -2226,7 +2226,7 @@ pre.out .err{color:#fca5a5}
 .meta-item{display:flex;flex-direction:column;gap:4px}
 .meta-label{font-size:12px;color:var(--text-muted)}
 .meta-value{font-size:14px;font-weight:500;color:var(--text-main);word-break:break-all}
-.meta-value.title{color:var(--primary);font-weight:600}
+.meta-value.title{color:var(--text-main);font-weight:600}
 .accordion{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin-bottom:16px;background:#fff}
 .accordion-header{padding:14px 16px;background:#fff;display:flex;align-items:center;justify-content:space-between;cursor:pointer;user-select:none;transition:background .2s;font-size:14px;font-weight:500;color:var(--text-main)}
 .accordion-header:hover{background:#f8fafc}
@@ -2268,11 +2268,11 @@ details{margin:8px 0}
 details summary{cursor:pointer;color:var(--text-muted);font-size:12.5px;padding:4px 0;outline:none}
 details summary:hover{color:var(--primary)}
 .err-banner{color:var(--danger-d);background:var(--danger-bg);border:1px solid #fecaca;border-radius:6px;padding:10px 14px;margin-bottom:12px;font-size:13px}
-.hit-ok{background:var(--success-bg);color:var(--success-d);border:1px solid #a7f3d0;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:13px;line-height:1.6}
-.hit-bad{background:var(--danger-bg);color:var(--danger-d);border:1px solid #fecaca;border-radius:6px;padding:10px 14px;margin-bottom:10px;font-size:13px}
+.hit-ok{background:var(--bg-subtle);color:var(--text-main);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;line-height:1.6}
+.hit-bad{background:var(--danger-bg);color:var(--danger-d);border:1px solid var(--danger-bd);border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px}
 
 /* ============ 登录 ============ */
-.login{position:fixed;inset:0;background:radial-gradient(720px 420px at 20% 15%,rgba(79,70,229,.35),transparent 65%),radial-gradient(640px 420px at 80% 85%,rgba(59,130,246,.25),transparent 65%),var(--sidebar-bg);display:none;align-items:center;justify-content:center;z-index:200}
+.login{position:fixed;inset:0;background:radial-gradient(760px 460px at 24% 18%,rgba(79,70,229,.28),transparent 62%),var(--sidebar-bg);display:none;align-items:center;justify-content:center;z-index:200}
 .login.show{display:flex}
 .login .box{background:#fff;border-radius:16px;padding:36px 34px;width:360px;box-shadow:0 32px 80px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.08)}
 .login .lg-logo{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#6366f1,#4338ca);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:24px;margin-bottom:16px;box-shadow:0 4px 12px rgba(79,70,229,.4)}
@@ -2514,8 +2514,8 @@ details summary:hover{color:var(--primary)}
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mDev')">取消</button>
     <span class="sp"></span>
-    <button class="btn btn-success" onclick="testDevice()">测试连接</button>
-    <button class="btn btn-warning" onclick="queryDeviceLine()">查当前线路</button>
+    <button class="btn btn-secondary" onclick="testDevice()">测试连接</button>
+    <button class="btn btn-secondary" onclick="queryDeviceLine()">查当前线路</button>
     <button class="btn btn-primary" onclick="saveDevice()">保存</button>
   </div>
 </div></div>
@@ -2633,18 +2633,18 @@ function refresh(p){
 
 // ---- 仪表盘 ----
 const STAT=[
- ["total","总执行","var(--primary)","var(--primary-bg)",'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8"/>'],
- ["success","成功","var(--success-d)","var(--success-bg)",'<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/>'],
- ["failed","失败","var(--danger-d)","var(--danger-bg)",'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>'],
- ["running","执行中","var(--warn-d)","var(--warn-bg)",'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
- ["skipped","条件不满足","var(--text-muted)","var(--bg-hover)",'<path d="M5 12h14"/><path d="M13 5l7 7-7 7"/>'],
- ["verify_failed","验证未过","var(--warn-d)","var(--warn-bg)",'<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>']];
+ ["total","总执行","","",'<path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8"/>'],
+ ["success","成功","","",'<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/>'],
+ ["failed","失败","var(--danger-d)","",'<circle cx="12" cy="12" r="10"/><path d="M15 9l-6 6M9 9l6 6"/>'],
+ ["running","执行中","","",'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
+ ["skipped","条件不满足","","",'<path d="M5 12h14"/><path d="M13 5l7 7-7 7"/>'],
+ ["verify_failed","验证未过","var(--warn-d)","",'<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>']];
 let LOG_FILTER="";
 function loadStats(){api("GET","/api/stats").then(s=>{
   $("ver").textContent=s.version;
   $("stat").innerHTML=STAT.map(x=>`<div class="stat-card${LOG_FILTER===(x[0]=='total'?'':x[0])?" on":""}" title="点击筛选该状态" onclick="setLogFilter('${x[0]=='total'?'':x[0]}')">
-    <div class="stat-ic" style="background:${x[3]};color:${x[2]}"><svg viewBox="0 0 24 24">${x[4]}</svg></div>
-    <div><b>${s[x[0]]}</b><span>${x[1]}</span></div></div>`).join("")})}
+    <div class="stat-ic"><svg viewBox="0 0 24 24">${x[4]}</svg></div>
+    <div><b${x[2]?` style="color:${x[2]}"`:""}>${s[x[0]]}</b><span>${x[1]}</span></div></div>`).join("")})}
 function setLogFilter(st){LOG_FILTER=(LOG_FILTER===st?"":st);loadStats();loadLogs()}
 const ST_TAG={success:["成功","ok"],failed:["失败","bad"],running:["执行中","info"],cooldown_skip:["冷却跳过","gray"],
   verify_failed:["验证未过","warn"],skipped:["条件不满足","gray"],cooldown:["冷却中","warn"]};
@@ -2654,7 +2654,7 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
     return `<tr class="clickable" tabindex="0" onkeydown="if(event.key==='Enter')showLog(${l.id})" onclick="showLog(${l.id})">
     <td class="mono" style="color:var(--text-muted)">#${l.id}</td>
     <td class="mono cell1" style="color:var(--text-muted)">${esc(l.started_at)}</td>
-    <td><span class="tag ${l.trigger=="api"?"info":"gray"}">${l.trigger=="api"?"API":"手动"}</span></td>
+    <td><span class="tag gray">${l.trigger=="api"?"API":"手动"}</span></td>
     <td class="cell1"><span class="keyword-text" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
     <td class="cell1"><b title="${esc(l.action_name)}">${esc(l.action_name)}</b></td><td class="cell1">${esc(l.device_name)}</td>
     <td class="cell1">${l.dry_run?"演练":"切换"}</td>
@@ -2741,7 +2741,7 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
     <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
       if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
       return arr.length?arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}" style="margin:0 6px 2px 0"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(''):'<span class="tag gray">未指定</span>'})()}</td>
-    <td><span class="tag ${x.match_type=="regex"?"":"info"}" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text">${esc(x.match_keywords)||'-'}</span></td>
+    <td><span class="tag gray" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text">${esc(x.match_keywords)||'-'}</span></td>
     <td>${x.cooldown||"全局"}</td>
     <td><div class="ops-cell">
       <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id})">执行</button>
@@ -2883,7 +2883,7 @@ function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
       <span class="device-host mono">${esc(x.host)}:${x.port}</span></div></td>
-    <td>${esc(x.site_name||"-")}</td><td><span class="tag ${x.protocol=="ssh"?"info":"gray"}">${x.protocol}</span></td>
+    <td>${esc(x.site_name||"-")}</td><td><span class="tag gray">${x.protocol}</span></td>
     <td>${esc(x.username)}</td><td>${x.timeout}s</td>
     <td><div class="ops-cell">
       <button class="btn btn-sm btn-secondary" onclick="testDeviceById(${x.id})">测试</button>
@@ -3019,10 +3019,10 @@ function replayRun(){const d=+$("rp_days").value;
   api("POST","/api/match/replay",{days:d}).then(r=>{
     if(r.error){$("rp_out").innerHTML=`<div class="hit-bad">${esc(r.error)}</div>`;return}
     let h=`<div class="stat-grid" style="margin:6px 0 16px">
-      <div class="stat-card"><div class="stat-ic" style="background:var(--primary-bg);color:var(--primary)"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div><div><b>${r.fetched}</b><span>回放标题数(去重前)</span></div></div>
-      <div class="stat-card"><div class="stat-ic" style="background:var(--success-bg);color:var(--success-d)"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></div><div><b>${r.matched}</b><span>命中动作</span></div></div>
-      <div class="stat-card"><div class="stat-ic" style="background:var(--warn-bg);color:var(--warn-d)"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div><div><b>${r.unmatched}</b><span>未命中</span></div></div>
-      <div class="stat-card"><div class="stat-ic" style="background:var(--purple-bg);color:var(--purple)"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><div><b>${r.unmatched_kinds}</b><span>未命中标题种类</span></div></div></div>`;
+      <div class="stat-card"><div class="stat-ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/></svg></div><div><b>${r.fetched}</b><span>回放标题数(去重前)</span></div></div>
+      <div class="stat-card"><div class="stat-ic"><svg viewBox="0 0 24 24"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg></div><div><b>${r.matched}</b><span>命中动作</span></div></div>
+      <div class="stat-card"><div class="stat-ic"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/></svg></div><div><b>${r.unmatched}</b><span>未命中</span></div></div>
+      <div class="stat-card"><div class="stat-ic"><svg viewBox="0 0 24 24"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></div><div><b>${r.unmatched_kinds}</b><span>未命中标题种类</span></div></div></div>`;
     if(r.per_action.length)
       h+=`<div class="table-responsive" style="border:1px solid var(--border);border-radius:8px"><table class="data-table"><thead><tr><th>动作</th><th style="width:120px">命中条数</th></tr></thead><tbody>`+
          r.per_action.map(x=>`<tr><td>${esc(x[0])}</td><td><b>${x[1]}</b></td></tr>`).join("")+`</tbody></table></div>`;
