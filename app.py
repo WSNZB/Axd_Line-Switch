@@ -840,18 +840,25 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         # 切换前：查询当前生效线路（演练也执行，用于"只看不切"）
         if (dev["status_command"] or "").strip():
             tl_append(conn, log_id, "查询当前生效线路")
+            scmd = dev["status_command"].strip()
+            out, qok, qerr = "", 1, ""
             try:
-                out = sess.send_cmd(dev["status_command"].strip())
+                out = sess.send_cmd(scmd)
                 emap = site_line_ip_map(conn, dev["site_id"])
                 precheck_line = parse_current_line(out, "", dev["current_regex"], extra_map=emap)
                 # 展示值带线路名与 IP，便于人工判断；判定比较仍用规范值
                 precheck_disp = parse_current_line(out, "", dev["current_regex"], with_ip=True, extra_map=emap)
                 login_note += "\n[切换前] 当前生效线路: %s" % (precheck_disp or "未识别(见上方回显)")
-                tl_append(conn, log_id, "当前生效线路：%s" % (precheck_disp or "未识别"),
-                          evidence="查询命令: %s\n\n%s" % (dev["status_command"].strip(), out))
+                tl_append(conn, log_id, "当前生效线路：%s（见命令执行）" % (precheck_disp or "未识别"))
             except Exception as e:
+                qok, qerr = 0, str(e)
                 login_note += "\n[切换前] 状态查询失败: %s" % e
                 tl_append(conn, log_id, "当前线路查询失败：%s" % e, "warn")
+            conn.execute("INSERT INTO exec_steps(log_id,seq,command,output,raw_output,ok,ts) "
+                         "VALUES(?,0,?,?,?,?,?)",
+                         (log_id, "[线路查询] " + scmd, (out or qerr)[:8000],
+                          (sess.last_raw or "")[:20000], qok, now()))
+            conn.commit()
         conn.execute("UPDATE exec_logs SET precheck_line=? WHERE id=?", (precheck_disp, log_id))
         conn.commit()
         if dry_run:
@@ -934,7 +941,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                     if not vok:
                         verify_ok = False
                         verr = "验证命令执行失败: %s | %s" % (vcmd, vout[-150:])
-                        tl_append(conn, log_id, "验证命令失败：%s" % vcmd, "bad")
+                        tl_append(conn, log_id, "验证命令失败：%s（见命令执行）" % vcmd, "bad")
                 if verify_ok and expect_kws:
                     vtext = "\n".join(vout_all)
                     missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
@@ -2249,7 +2256,7 @@ function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
-  const term=(title,text,open)=>`<div class="accordion${open?" open":""}"><div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">${title}${ARROW}</div><div class="accordion-content"><div class="plain">${esc(text)}</div></div></div>`;
+  const term=(title,text,open)=>`<div class="accordion${open?" open":""}"><div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">${title}${ARROW}</div><div class="accordion-content"><div class="terminal-wrapper" style="padding-top:0;border-top:none"><div class="terminal-window"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">Session Transcript</span></div><div class="terminal-body">${esc(text)}</div></div></div></div></div>`;
   let h=`<div class="meta-grid">
     <div class="meta-item"><span class="meta-label">告警标题</span><span class="meta-value title">${esc(l.alarm_title)||"-"}</span></div>
     <div class="meta-item"><span class="meta-label">故障线路</span><span class="meta-value">${esc(l.source_line)||"-"}</span></div>
@@ -2265,7 +2272,7 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
       ${t.ev?`<div class="tl-ev"><span class="tl-ev-t" onclick="this.parentElement.classList.toggle('open')">证据</span><pre class="out">${esc(t.ev)}</pre></div>`:""}</div>`).join("")+`</div>`;
   if(l.error)h+=`<div class="err-banner">错误：${esc(l.error)}</div>`;
   if(l.session_log)h+=term("会话原文",l.session_log,false);
-  if((l.steps||[]).length)h+=`<div class="timeline-title">命令执行<span class="q" data-tip="本次任务实际下发的全部命令：切换命令块中的每一条 + 验证命令块中的查询命令。&#10;查线路用的路由表在上方时间线「当前生效线路」证据中。">?</span></div>`;
+  if((l.steps||[]).length)h+=`<div class="timeline-title">命令执行<span class="q" data-tip="按执行顺序列出本次对设备下发的全部命令：&#10;[线路查询] 切换前查当前生效线路 → 切换命令块每条命令 → [验证] 验证命令。&#10;时间线中的结论均可在对应命令回显中核对。">?</span></div>`;
   h+=(l.steps||[]).map(s=>`<div class="accordion${s.ok?"":" open"}">
     <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
       <span style="display:flex;align-items:center;gap:10px;flex-wrap:wrap"><span class="${s.ok?"tag-ok":"tag-fail"}">${s.ok?"OK":"FAIL"}</span><span class="command-text">${esc(s.command)}</span></span>${ARROW}</div>

@@ -136,8 +136,9 @@ def test_require_line_skip():
         dev, conn, log_id, ["sys", "quit"], 0, None, None, require_line="Vodacom")
     assert skip and "无需切换" in skip, (skip, note)
     assert precheck == "Airtel", precheck
-    n = conn.execute("SELECT COUNT(*) c FROM exec_steps WHERE log_id=?", (log_id,)).fetchone()["c"]
-    assert n == 0, "跳过时不应下发任何切换命令，实际执行了 %d 条" % n
+    rows = conn.execute("SELECT command FROM exec_steps WHERE log_id=?", (log_id,)).fetchall()
+    assert all(r["command"].startswith("[线路查询]") for r in rows), \
+        "跳过时只应有线路查询步骤，实际: %s" % [r["command"] for r in rows]
     print("PASS 场景8 当前线路(Airtel)≠故障线路(Vodacom) → 不下发命令，直接跳过")
 
     # 故障线路 = Airtel（当前就是 Airtel）→ 应执行
@@ -148,8 +149,8 @@ def test_require_line_skip():
     ok, err, note, precheck, verify_ok, skip = app._run_session(
         dev, conn, log2, ["sys", "quit"], 0, None, None, require_line="Airtel")
     assert not skip and ok, (skip, err, note)
-    n2 = conn.execute("SELECT COUNT(*) c FROM exec_steps WHERE log_id=?", (log2,)).fetchone()["c"]
-    assert n2 == 2, "应下发 2 条命令，实际 %d" % n2
+    cmds2 = [r["command"] for r in conn.execute("SELECT command FROM exec_steps WHERE log_id=? ORDER BY id", (log2,)).fetchall()]
+    assert cmds2 == ["[线路查询] display ip routing-table", "sys", "quit"], cmds2
     print("PASS 场景9 当前线路(Airtel)=故障线路 → 正常下发 2 条命令")
     srv.shutdown()
 
