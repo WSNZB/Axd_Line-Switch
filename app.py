@@ -2266,14 +2266,14 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .sel-opt:hover{background:var(--bg-hover)}
 .sel-opt.on{color:var(--primary);font-weight:600;background:var(--primary-bg)}
 .sel-opt.on::before{content:"✓";font-size:11px}
-.flt-group select,.flt-group input{height:34px;font-size:13px;border:1px solid var(--border2);border-radius:var(--r-ctl);background-color:#fff;color:var(--text-main);outline:none;transition:border-color .15s,box-shadow .15s}
+.flt-group select,.flt-group input{height:32px;font-size:13px;border:1px solid var(--border2);border-radius:var(--r-ctl);background-color:#fff;color:var(--text-main);outline:none;transition:border-color .15s,box-shadow .15s}
 .flt-group select{padding:0 34px 0 12px;width:auto;cursor:pointer;appearance:none;-webkit-appearance:none;font-weight:500;color:var(--text-secondary);
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat:no-repeat;background-position:right 12px center}
 .flt-group select:hover{border-color:#9aa8ba}
 .flt-group input{padding:0 12px;width:210px}
 .flt-group select:focus,.flt-group input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
-.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 22px;border-bottom:1px solid var(--border);background:var(--bg-subtle)}
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 22px;border-top:1px solid var(--border)}
 .pager .pg-info{margin-right:auto;font-size:12px;color:var(--text-muted)}
 .pg-btn{border:1px solid var(--border2);background:#fff;color:var(--text-secondary);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;transition:all .15s}
 .pg-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
@@ -2308,6 +2308,10 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .cov-cnt.gray{color:var(--text-muted);background:var(--bg-hover)}
 .cov-none{font-size:12px;color:var(--text-faint)}
 .cov-lines{border:1px solid var(--border);border-radius:8px;overflow:hidden;background:#fff}
+.ladder-tags{display:flex;flex-wrap:wrap;gap:4px 6px}
+.ladder-tags .tag{margin:0}
+.act-tb td{padding:10px 14px}
+.act-tb th{padding:9px 14px}
 .cov-tb{font-size:12.5px}
 .cov-tb th{padding:9px 14px;font-size:11.5px}
 .cov-tb td{padding:9px 14px}
@@ -2331,22 +2335,22 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
 .err-text{color:#b91c1c;font-size:12px;line-height:1.5}
 .data-table td.cell1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.data-table.log-tb td{padding:11px 12px}
-.data-table.log-tb th{padding:10px 12px}
+.data-table.log-tb td{padding:6px 12px}
+.data-table.log-tb th{padding:8px 12px}
 
 /* ============ 统计卡 ============ */
-.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-bottom:24px}
+.stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
 .stat-grid.stat-6{grid-template-columns:repeat(6,1fr)}
-.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-card);padding:18px 20px;display:flex;align-items:center;gap:15px;box-shadow:var(--sh-1);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-card);padding:12px 18px;display:flex;align-items:center;gap:15px;box-shadow:var(--sh-1);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
 .stat-card:hover{border-color:var(--border2);box-shadow:var(--sh-2);transform:translateY(-1px)}
 .stat-card.on{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
 tr.row-off td{opacity:.55}
 tr.row-off td .tag{filter:saturate(.4)}
 ,input:focus-visible,select:focus-visible,tr.clickable:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-.stat-ic{width:44px;height:44px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg-hover);color:var(--text-muted)}
+.stat-ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg-hover);color:var(--text-muted)}
 .stat-ic svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
-.stat-card b{font-size:26px;font-weight:750;display:block;line-height:1.2;font-variant-numeric:tabular-nums}
+.stat-card b{font-size:22px;font-weight:750;display:block;line-height:1.2;font-variant-numeric:tabular-nums}
 .stat-card span{color:var(--text-muted);font-size:12.5px}
 
 /* ============ 表单 ============ */
@@ -2599,13 +2603,13 @@ details summary:hover{color:var(--primary)}
         <input id="f_kw" placeholder="搜索标题/错误/动作关键字" oninput="LOG_F.kw=this.value.trim();clearTimeout(window.__kwT);window.__kwT=setTimeout(()=>{LOG_PAGE=1;loadLogs()},300)">
         </div>
         <button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
-      <div id="logpg"></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
       <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col style="width:300px"><col style="width:170px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>站点</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
       <tbody id="logtb"></tbody></table></div>
+      <div id="logpg"></div>
     </div>
   </div>
 
@@ -2650,9 +2654,9 @@ details summary:hover{color:var(--primary)}
     </div>
     <div class="card">
       <div class="card-header"><div class="flt-group"><div class="sel" id="f_act_site"></div></div><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
-      <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:300px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
-        <th>匹配关键词 / 正则（预检用）</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
+      <div class="table-responsive"><table class="data-table act-tb" style="table-layout:fixed;min-width:1320px"><thead><tr>
+        <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:300px">规则名 / 设备</th><th style="width:240px">目标阶梯（降级顺序）</th>
+        <th>匹配关键词 / 正则（预检用）</th><th style="width:70px">冷却</th><th style="width:290px;text-align:right">执行操作</th></tr></thead>
       <tbody id="acttb"></tbody></table></div>
     </div>
   </div>
@@ -3111,12 +3115,12 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
   $("acttb").innerHTML=a.length?a.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td class="cell1">${esc(x.site_name)||'<span style="color:var(--text-faint)">-</span>'}</td>
-    <td><span class="device-name">${esc(x.name)}</span><span class="device-host" style="margin-left:8px">${esc(x.protocol||"")}://${esc(x.host||"")}</span></td>
+    <td class="cell1"><span class="device-name" style="white-space:nowrap">${esc(x.name)}</span><span class="device-host mono" style="margin-left:8px;white-space:nowrap">${esc(x.protocol||"")}://${esc(x.host||"")}</span></td>
     <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
       if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
-      return arr.length?arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}" style="margin:0 6px 2px 0"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(''):'<span class="tag gray">未指定</span>'})()}</td>
-    <td><span class="tag gray" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text">${esc(x.match_keywords)||'-'}</span></td>
-    <td>${x.cooldown||"全局"}</td>
+      return arr.length?`<div class="ladder-tags">`+arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join('')+`</div>`:'<span class="tag gray">未指定</span>'})()}</td>
+    <td><span class="tag gray" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;max-width:calc(100% - 60px)" title="${esc(x.match_keywords)}">${esc(x.match_keywords)||'-'}</span></td>
+    <td style="white-space:nowrap">${x.cooldown||"全局"}</td>
     <td><div class="ops-cell">
       <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id})">执行</button>
       <button class="btn btn-sm btn-secondary" onclick="execAction(${x.id},true)">演练</button>
@@ -3339,23 +3343,31 @@ function delSite(id){if(confirm("确认删除站点 #"+id+"？"))api("DELETE","/
 
 // ---- 站点线路（互斥判定依据） ----
 function manageLines(siteId){const s=(DATA.sites||[]).find(x=>x.id==siteId)||{};
-  $("l_site").value=siteId;
+  LINE_EDIT=null;$("l_site").value=siteId;
   $("mLineTitle").textContent="站点线路 · "+(s.name||"");
   $("l_name").value="";$("l_kw").value="";$("l_ip").value="";
   loadLines(siteId);$("mLine").classList.add("show")}
+let LINE_EDIT=null;
 function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
   DATA.lines=DATA.lines.filter(l=>l.site_id!=siteId).concat(ls);
-  $("ltb").innerHTML=ls.length?ls.map(l=>`<tr>
-    <td style="width:130px"><input id="ln_${l.id}" value="${esc(l.name)}" style="padding:6px 10px;font-size:12.5px"></td>
-    <td><input id="lk_${l.id}" value="${esc(l.alarm_keywords)}" placeholder="如 41.243.21.170,Airtel" style="padding:6px 10px;font-size:12.5px"></td>
-    <td style="width:170px"><input id="li_${l.id}" value="${esc(l.nexthop_ip)}" class="mono" placeholder="下一跳IP" style="padding:6px 10px;font-size:12.5px"></td>
+  $("ltb").innerHTML=ls.length?ls.map(l=>{
+    if(LINE_EDIT===l.id)return `<tr>
+      <td style="width:130px"><input id="ln_${l.id}" value="${esc(l.name)}" style="padding:6px 10px;font-size:12.5px"></td>
+      <td><input id="lk_${l.id}" value="${esc(l.alarm_keywords)}" placeholder="如 41.243.21.170,Airtel" style="padding:6px 10px;font-size:12.5px"></td>
+      <td style="width:170px"><input id="li_${l.id}" value="${esc(l.nexthop_ip)}" class="mono" placeholder="下一跳IP" style="padding:6px 10px;font-size:12.5px"></td>
+      <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
+      <td><div class="ops-cell"><button class="btn btn-sm btn-primary" onclick="saveLine(${l.id})">保存</button>
+      <button class="btn btn-sm btn-secondary" onclick="LINE_EDIT=null;loadLines(+$('l_site').value)">取消</button></div></td></tr>`;
+    return `<tr>
+    <td><b>${esc(l.name)}</b></td><td><span class="keyword-text mono" style="color:var(--text-muted)">${esc(l.alarm_keywords)||'(空)'}</span></td>
+    <td class="mono" style="color:var(--text-muted)">${esc(l.nexthop_ip)||'-'}</td>
     <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
-    <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="saveLine(${l.id})">保存</button>
-    <button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`).join(""):
+    <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="LINE_EDIT=${l.id};loadLines(+$('l_site').value)">编辑</button>
+    <button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`}).join(""):
     '<tr><td colspan=5><div class="empty">暂无线路</div></td></tr>'})}
 function saveLine(id){api("PUT","/api/lines/"+id,{
   name:$("ln_"+id).value.trim(),alarm_keywords:$("lk_"+id).value.trim(),nexthop_ip:$("li_"+id).value.trim()
-  }).then(()=>{showToast("线路已保存");loadLines(+$("l_site").value);loadSites();loadActions&&loadActions()})}
+  }).then(()=>{showToast("线路已保存");LINE_EDIT=null;loadLines(+$("l_site").value);loadSites();loadActions&&loadActions()})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
   alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim()};
   if(!b.name)return showToast("线路名必填",1);
