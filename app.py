@@ -429,14 +429,15 @@ _STEP_STATUS_TXT = {
 def plan_switch(conn, title, site_id=None):
     """多线路降级决策（规则内阶梯模型）。
     1) 故障线路 = 告警标题匹配站点线路关键字；
-    2) 候选规则 = 该站点启用动作（按各自 match_keywords 命中标题的优先），
+    2) 候选规则 = 该站点内关键词命中标题的启用动作，
        每条规则的 targets 即降级阶梯：按顺序用各目标线路的告警关键字 gs 直查
        AIOps 未处理/处理中（不按时间过滤），第一条健康且配置了本方向命令的目标即选中；
     3) 全部规则的所有目标均不健康/缺命令 → 不切换；
     4) 站点未配线路 → 回退按动作关键词直接执行（兼容旧配置）。
     返回 dict：matched/allow/reason/note/site_id/site_name/fault_lines/target_line/
               action/target（选中目标配置）/steps/trace/legacy。"""
-    out = {"matched": False, "allow": False, "reason": "", "note": "", "site_id": site_id,
+    out = {"matched": False, "rule_matched": None, "allow": False, "reason": "",
+           "note": "", "site_id": site_id,
            "site_name": "", "fault_lines": [], "target_line": "", "action": None,
            "target": None, "steps": [], "trace": {}, "legacy": False}
     t = (title or "").strip()
@@ -467,7 +468,8 @@ def plan_switch(conn, title, site_id=None):
         m0 = md[0]
         act = m0["action"]
         srow = conn.execute("SELECT name FROM sites WHERE id=?", (act["site_id"] or 0,)).fetchone()
-        out.update({"matched": True, "site_id": act["site_id"], "site_name": srow["name"] if srow else ""})
+        out.update({"matched": True, "rule_matched": True,
+                    "site_id": act["site_id"], "site_name": srow["name"] if srow else ""})
         if site_lines(conn, act["site_id"]):
             out["reason"] = ("站点「%s」已配置线路，但告警标题未匹配到任何线路的告警关键字，"
                              "请检查站点线路配置" % (srow["name"] if srow else act["site_id"]))
@@ -486,11 +488,17 @@ def plan_switch(conn, title, site_id=None):
     srow = conn.execute("SELECT name FROM sites WHERE id=?", (sid,)).fetchone()
     out.update({"matched": True, "site_id": sid, "site_name": srow["name"] if srow else "",
                 "fault_lines": fl})
-    # 候选规则：优先取关键词命中标题的动作（语法错误规则除外），其次取站点内其它启用动作
+    # 站点线路命中只确定故障线路；仍须有同站点的动作规则命中告警标题。
     hits = {h["action"]["id"] for h in match_detail(conn, t) if not h.get("error")}
-    acts = conn.execute("SELECT * FROM actions WHERE site_id=? AND enabled=1 ORDER BY id",
-                        (sid,)).fetchall()
-    cands = [a for a in acts if a["id"] in hits] + [a for a in acts if a["id"] not in hits]
+    cands = [a for a in conn.execute("SELECT * FROM actions WHERE site_id=? AND enabled=1 ORDER BY id",
+                                     (sid,)).fetchall() if a["id"] in hits]
+    if not cands:
+        out["rule_matched"] = False
+        out["reason"] = ("站点「%s」识别到故障线路「%s」，但告警标题未命中该站点的任何启用切换规则"
+                         % (out["site_name"] or sid, "、".join(fl)))
+        out["note"] = "仅线路告警关键字命中，切换规则未命中"
+        return out
+    out["rule_matched"] = True
     line_cache = {}
 
     def check_line(name):
@@ -1995,7 +2003,8 @@ class Handler(BaseHTTPRequestHandler):
                 if with_dry and title:
                     try:
                         p = plan_switch(conn, title)
-                        plan = {"matched": p["matched"], "allow": p["allow"],
+                        plan = {"matched": p["matched"], "rule_matched": p["rule_matched"],
+                                "allow": p["allow"],
                                 "site": p.get("site_name"), "fault_lines": p.get("fault_lines"),
                                 "target_line": p.get("target_line"),
                                 "reason": p.get("reason"), "note": p.get("note"),
@@ -3583,14 +3592,14 @@ function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
     else if(p&&p.matched){
       const st=s=>`<span class="tag ${s.status=="clear"?"ok":(s.status=="fault"?"gray":(s.status=="active"||s.status=="no_cmd"?"bad":"warn"))}">${esc(_STEP_TXT[s.status]||s.status)}</span>`;
       h+=`<div style="border:1px solid var(--border);border-radius:8px;padding:12px 14px;margin-bottom:12px">
-        <div style="font-weight:600;margin-bottom:8px">降级预演：站点 ${esc(p.site||"-")} · 故障线路 ${esc((p.fault_lines||[]).join("、")||"-")}</div>
+        <div style="font-weight:600;margin-bottom:8px">${p.rule_matched===false?"线路识别":"降级预演"}：站点 ${esc(p.site||"-")} · 故障线路 ${esc((p.fault_lines||[]).join("、")||"-")}</div>
         ${(p.steps||[]).map(s=>`<div style="display:flex;gap:10px;align-items:center;padding:3px 0;font-size:13px">
           <span style="width:200px">${esc(s.line)}${s.action?`<span style="color:var(--text-faint);font-size:12px">（规则:${esc(s.action)}）</span>`:""}</span>
           <span style="color:var(--text-muted);flex:1">${s.status=="active"||s.status=="clear"||s.status=="no_cmd"?`未处理 ${s.pending} / 处理中 ${s.handling}`:""}</span>
           ${st(s)}</div>`).join("")}
         <div style="margin-top:8px;font-size:13px">${p.allow
           ? `<span class="tag ok">将执行切换</span> 规则「${esc(p.action_name||"")}」→ 目标线路 <b>${esc(p.target_line||"")}</b>`
-          : `<span class="tag bad">不会切换</span> ${esc(p.reason||"")}`}</div>
+          : `<span class="tag bad">${p.rule_matched===false?"未命中切换规则":"不会切换"}</span> ${esc(p.reason||"")}`}</div>
       </div>`}
     if(r.hits&&r.hits.length){h+=r.hits.map(x=>x.error
       ?`<div class="hit-bad">规则 <b>${esc(x.action_name)}</b> 配置错误：${esc(x.reason)}</div>`

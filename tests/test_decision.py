@@ -127,6 +127,27 @@ def test_title_not_match_line():
     print("PASS 场景5 站点已配线路但标题不匹配线路 → 不切换：%s" % p["reason"])
 
 
+def test_line_without_matching_action():
+    """4G 线路告警只命中线路关键词时，不得借用 Airtel 的切换规则。"""
+    old = conn.execute("SELECT match_keywords FROM actions WHERE id=?", (RULE,)).fetchone()[0]
+    conn.execute("UPDATE actions SET match_keywords=? WHERE id=?",
+                 ("41.243.21.170,Airtel", RULE))
+    conn.commit()
+    try:
+        fake_alarms([])
+        p = app.plan_switch(conn, T_4G)
+        assert p["matched"] and not p["rule_matched"] and not p["allow"], p
+        assert p["fault_lines"] == ["4G"] and not p["steps"] and p["action"] is None, p
+        assert "未命中该站点的任何启用切换规则" in p["reason"], p["reason"]
+        assert not app.match_actions(conn, T_4G)
+        airtel = app.plan_switch(conn, T_AIRTEL)
+        assert airtel["rule_matched"] and airtel["allow"] and airtel["target_line"] == "Vodacom", airtel
+        print("PASS 4G 告警只命中站点线路、不命中 Airtel 规则 → 不切换")
+    finally:
+        conn.execute("UPDATE actions SET match_keywords=? WHERE id=?", (old, RULE))
+        conn.commit()
+
+
 def test_site_without_lines_legacy():
     fake_alarms([])
     p = app.plan_switch(conn, "【告警】HK-ESXi 宕机")
@@ -374,6 +395,7 @@ if __name__ == "__main__":
     test_all_lines_active()
     test_skip_candidate_without_cmd()
     test_title_not_match_line()
+    test_line_without_matching_action()
     test_site_without_lines_legacy()
     test_query_error_skipped()
     test_multi_site_conflict()
