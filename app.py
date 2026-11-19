@@ -2504,6 +2504,23 @@ details summary:hover{color:var(--primary)}
 .hit-ok{background:var(--bg-subtle);color:var(--text-main);border:1px solid var(--border);border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px;line-height:1.6}
 .hit-bad{background:var(--danger-bg);color:var(--danger-d);border:1px solid var(--danger-bd);border-radius:8px;padding:10px 14px;margin-bottom:10px;font-size:13px}
 
+/* ============ 匹配预检：双栏诊断卡片 ============ */
+.diag-grid{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+@media (max-width:1100px){.diag-grid{grid-template-columns:1fr}}
+.diag-card{background:var(--bg-card);border:1px solid var(--border);border-radius:12px;box-shadow:var(--sh-1);padding:20px 22px;display:flex;flex-direction:column}
+.diag-hd{display:flex;align-items:center;gap:11px;margin-bottom:8px}
+.diag-ic{width:34px;height:34px;border-radius:9px;background:var(--primary-bg);color:var(--primary);display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.diag-ic svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.diag-title{font-size:15px;font-weight:650;color:var(--text-main)}
+.diag-desc{font-size:12.5px;color:var(--text-muted);line-height:1.65;margin:0 0 16px}
+.diag-box{flex:1;border:1px dashed var(--border2);border-radius:10px;background:var(--bg-subtle);min-height:280px;padding:14px;overflow:auto}
+.diag-box .empty{padding:70px 20px}
+.diag-box .stat-grid{grid-template-columns:repeat(2,1fr);gap:12px}
+.diag-box .stat-card{padding:14px 16px}
+.diag-btn-full{width:100%;justify-content:center}
+.btn-full{width:100%;justify-content:center}
+.sel-block{width:100%;display:flex}
+
 /* ============ 登录 ============ */
 .login{position:fixed;inset:0;background:radial-gradient(760px 460px at 24% 18%,rgba(79,70,229,.28),transparent 62%),var(--sidebar-bg);display:none;align-items:center;justify-content:center;z-index:200}
 .login.show{display:flex}
@@ -2594,21 +2611,33 @@ details summary:hover{color:var(--primary)}
 
   <!-- 匹配预检 -->
   <div class="page-view" id="p-match">
-    <div class="card">
-      <div class="card-body" style="display:flex;flex-direction:column;gap:16px">
-        <div class="toolbar-row">
+    <div class="diag-grid">
+      <!-- 左：单条即时诊断 -->
+      <div class="diag-card">
+        <div class="diag-hd">
+          <div class="diag-ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg></div>
+          <div class="diag-title">单条即时诊断</div>
+        </div>
+        <p class="diag-desc">用于即时排查：粘贴一条告警标题，查看它命中了哪条规则，并预览降级演算选中的目标线路。</p>
+        <div class="toolbar-row" style="margin-bottom:14px">
           <div class="input-group">
-            <input id="mt_title" placeholder="输入告警标题，如 【ICMP丢包】拉米卡专线-Airtel专线（刚果金地址）" onkeydown="if(event.key=='Enter')matchTest()">
-            <button class="btn btn-primary" onclick="matchTest()">检测规则</button>
+            <input id="mt_title" placeholder="例如：【ICMP丢包】拉米卡专线-Airtel专线（刚果金地址）" onkeydown="if(event.key=='Enter')matchTest()">
+            <button class="btn btn-primary" onclick="matchTest()">开始诊断</button>
           </div>
         </div>
-        <div id="mt_out"><div class="empty" style="padding:28px 24px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>粘贴一条真实告警标题，校验它会命中哪条规则、降级预演会选中哪个目标线路<br><span style="font-size:12px">也可用下方「回放」以近几天真实告警批量检验规则覆盖</span></div></div>
-        <div class="action-buttons" style="border-top:1px dashed var(--border);padding-top:16px">
-          <div class="sel" id="rp_days"></div>
-          <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" data-tip="单条预检=验证一条标题命中谁、怎么降级；回放=批量拉取近N天真实告警，统计整体覆盖率与漏网标题">?</span></button>
-          <span style="font-size:12px;color:var(--text-faint)">单条检测在上方面向排查；此处批量回放面向覆盖率验证</span>
+        <div class="diag-box" id="mt_out"><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.97L12 12.01l8.73-5.04M12 22.08V12"/></svg>等待输入告警标题进行诊断...</div></div>
+      </div>
+      <!-- 右：批量覆盖率验证 -->
+      <div class="diag-card">
+        <div class="diag-hd">
+          <div class="diag-ic"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><rect x="7" y="11" width="3" height="6" rx="1"/><rect x="12" y="7" width="3" height="10" rx="1"/><rect x="17" y="13" width="3" height="4" rx="1"/></svg></div>
+          <div class="diag-title">批量覆盖率验证</div>
         </div>
-        <div id="rp_out"></div>
+        <p class="diag-desc">用于整体验证：拉取近 N 天全部真实告警，检验现有规则的整体覆盖率与漏网标题。</p>
+        <label style="margin:0 0 8px">选择历史时间范围</label>
+        <div class="sel sel-block" id="rp_days"></div>
+        <button class="btn btn-secondary btn-full" style="margin:14px 0" onclick="replayRun()"><svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>开始批量验证</button>
+        <div class="diag-box" id="rp_out"><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>系统将拉取历史告警并输出覆盖报告...</div></div>
       </div>
     </div>
   </div>
@@ -2890,7 +2919,7 @@ function initSel(id,ph,cb){const el=$(id);if(el._inited){el._ph=ph;el._cb=cb;ret
     if(el.classList.contains("open")){closeSel(el);return}
     el.classList.add("open");
     const m=document.createElement("div");m.className="sel-menu";
-    m.innerHTML=`<div class="sel-opt${!el.dataset.val?" on":""}" data-v="">${esc(el._ph)}</div>`+
+    m.innerHTML=(el.dataset.val?"":`<div class="sel-opt" data-v="">${esc(el._ph)}</div>`)+
       el._opts.map(o=>`<div class="sel-opt${o===el.dataset.val?" on":""}" data-v="${esc(o)}">${esc(o)}</div>`).join("");
     el.appendChild(m);
     m.querySelectorAll(".sel-opt").forEach(op=>op.onclick=ev=>{ev.stopPropagation();
