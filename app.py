@@ -3156,8 +3156,7 @@ function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
   if(DEV_KW){const k=DEV_KW.toLowerCase();d=d.filter(x=>((x.name||"")+(x.host||"")+(x.site_name||"")).toLowerCase().includes(k))}
   $("devtb").innerHTML=d.length?d.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
-    <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
-      <span class="device-host mono">${esc(x.host)}:${x.port}</span></div></td>
+    <td><span class="device-name">${esc(x.name)}</span><span class="device-host mono" style="margin-left:10px">${esc(x.host)}:${x.port}</span></td>
     <td>${esc(x.site_name||"-")}</td><td><span class="tag gray">${x.protocol}</span></td>
     <td>${esc(x.username)}</td><td>${x.timeout}s</td>
     <td><div class="ops-cell">
@@ -3217,8 +3216,8 @@ function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines"
   $("sitetb").innerHTML=s.length?s.map(x=>{
     const ls=lines.filter(l=>l.site_id==x.id);
     return `<tr>
-    <td><span class="device-name">${esc(x.name)}</span><div class="device-host mono">#${x.id}</div></td>
-    <td>${ls.length?ls.map(l=>`<span class="tag ok" style="margin:0 6px 4px 0">${esc(l.name)}</span>`).join(""):'<span style="color:var(--text-faint)">未配置</span>'}</td>
+    <td><span class="device-name">${esc(x.name)}</span><span class="device-host mono" style="margin-left:8px">#${x.id}</span></td>
+    <td>${ls.length?ls.map(l=>`<span class="tag ok" style="margin-right:6px">${esc(l.name)}</span>`).join(""):'<span style="color:var(--text-faint)">未配置</span>'}</td>
     <td style="color:var(--text-muted);max-width:200px" class="cell1"><span title="${esc(x.remark)}">${esc(x.remark)||"-"}</span></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="editSite(${x.id})">编辑</button>
     <button class="btn btn-sm btn-secondary" onclick="manageLines(${x.id})">线路</button>
