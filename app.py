@@ -240,6 +240,7 @@ def init_db():
         ("exec_logs", "source_line", "TEXT DEFAULT ''"),
         ("exec_logs", "decision_note", "TEXT DEFAULT ''"),
         ("exec_logs", "timeline", "TEXT DEFAULT ''"),
+        ("exec_logs", "duration_ms", "INTEGER DEFAULT -1"),
         ("lines", "nexthop_ip", "TEXT DEFAULT ''"),
         ("exec_steps", "raw_output", "TEXT DEFAULT ''"),
     ]:
@@ -1346,6 +1347,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
 
 def execute_action(log_id):
     conn = get_db()
+    _t0 = time.time()
     try:
         log = conn.execute("SELECT * FROM exec_logs WHERE id=?", (log_id,)).fetchone()
         if not log:
@@ -1354,7 +1356,7 @@ def execute_action(log_id):
         act = conn.execute("SELECT * FROM actions WHERE id=?", (log["action_id"],)).fetchone()
         if not dev or not act:
             tl_append(conn, log_id, "设备或动作不存在，任务终止", "bad")
-            conn.execute("UPDATE exec_logs SET status='failed', error='设备或动作不存在', finished_at=? WHERE id=?",
+            conn.execute("UPDATE exec_logs SET status='failed', error='设备或动作不存在', finished_at=?, duration_ms=0 WHERE id=?",
                          (now(), log_id))
             conn.commit()
             return
@@ -1382,7 +1384,7 @@ def execute_action(log_id):
         cmds = parse_block(block)
         if not cmds and not log["dry_run"]:
             tl_append(conn, log_id, "命令块为空，任务终止", "bad")
-            conn.execute("UPDATE exec_logs SET status='failed', error='命令块为空', finished_at=? WHERE id=?",
+            conn.execute("UPDATE exec_logs SET status='failed', error='命令块为空', finished_at=?, duration_ms=0 WHERE id=?",
                          (now(), log_id))
             conn.commit()
             return
@@ -1410,8 +1412,9 @@ def execute_action(log_id):
                        "failed": "任务失败", "skipped": "任务结束：未切换"}
         tl_append(conn, log_id, _FINISH_TXT.get(status, "任务结束: %s" % status),
                   "ok" if status == "success" else ("bad" if status in ("failed", "verify_failed") else "warn"))
-        conn.execute("UPDATE exec_logs SET status=?, error=?, matched_note=?, finished_at=? WHERE id=?",
-                     (status, err or "", note or "", now(), log_id))
+        dur = int((time.time() - _t0) * 1000)
+        conn.execute("UPDATE exec_logs SET status=?, error=?, matched_note=?, finished_at=?, duration_ms=? WHERE id=?",
+                     (status, err or "", note or "", now(), dur, log_id))
         conn.commit()
     finally:
         conn.close()
@@ -2951,9 +2954,11 @@ const TL_IC={ok:'<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></s
   warn:'<svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'};
 function durTxt(l){if(!l.finished_at||!l.started_at)return "";
-  const t=(new Date(l.finished_at.replace(" ","T"))-new Date(l.started_at.replace(" ","T")))/1000;
+  let t;
+  if(l.duration_ms>=0)t=l.duration_ms/1000;
+  else t=(new Date(l.finished_at.replace(" ","T"))-new Date(l.started_at.replace(" ","T")))/1000;
   if(!(t>=0))return "";
-  const d=t>=86400?Math.floor(t/86400)+"天":t>=3600?Math.floor(t/3600)+"时"+Math.floor(t%3600/60)+"分":t>=60?Math.floor(t/60)+"分"+Math.round(t%60)+"秒":Math.round(t)+"秒";
+  const d=t>=86400?Math.floor(t/86400)+"天":t>=3600?Math.floor(t/3600)+"时"+Math.floor(t%3600/60)+"分":t>=60?Math.floor(t/60)+"分"+Math.round(t%60)+"秒":(t<1?Math.round(t*1000)+"毫秒":Math.round(t)+"秒");
   return ` <span style="color:var(--primary);font-weight:600">（共 ${d}）</span>`}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
