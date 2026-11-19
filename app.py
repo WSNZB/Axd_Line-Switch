@@ -194,6 +194,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         action_id INTEGER,
         action_name TEXT DEFAULT '',
+        site_name TEXT DEFAULT '',
         device_id INTEGER,
         device_name TEXT DEFAULT '',
         trigger TEXT DEFAULT 'api',
@@ -224,6 +225,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         received_at TEXT NOT NULL,
         title TEXT NOT NULL,
+        source TEXT NOT NULL DEFAULT 'unknown',
+        user_agent TEXT DEFAULT '',
         matched INTEGER NOT NULL DEFAULT 0,
         rule_matched INTEGER NOT NULL DEFAULT 0,
         executed INTEGER NOT NULL DEFAULT 0,
@@ -239,6 +242,7 @@ def init_db():
     );
     """)
     # 兼容旧库：补列
+    added_log_site_name = False
     for tbl, col, ddl in [
         ("devices", "status_command", "TEXT DEFAULT 'display ip routing-table 0.0.0.0'"),
         ("devices", "current_regex", "TEXT DEFAULT ''"),
@@ -248,6 +252,7 @@ def init_db():
         ("actions", "target_line", "TEXT DEFAULT ''"),
         ("actions", "targets_json", "TEXT DEFAULT ''"),
         ("exec_logs", "target_line", "TEXT DEFAULT ''"),
+        ("exec_logs", "site_name", "TEXT DEFAULT ''"),
         ("exec_logs", "target_override", "TEXT DEFAULT ''"),
         ("exec_logs", "precheck_line", "TEXT DEFAULT ''"),
         ("exec_logs", "session_log", "TEXT DEFAULT ''"),
@@ -258,10 +263,35 @@ def init_db():
         ("lines", "nexthop_ip", "TEXT DEFAULT ''"),
         ("exec_steps", "raw_output", "TEXT DEFAULT ''"),
         ("alert_receipts", "rule_matched", "INTEGER NOT NULL DEFAULT 0"),
+        ("alert_receipts", "source", "TEXT NOT NULL DEFAULT 'unknown'"),
+        ("alert_receipts", "user_agent", "TEXT DEFAULT ''"),
     ]:
         cols = [r[1] for r in c.execute("PRAGMA table_info(%s)" % tbl)]
         if col not in cols:
             c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (tbl, col, ddl))
+            if (tbl, col) == ("exec_logs", "site_name"):
+                added_log_site_name = True
+    if added_log_site_name:
+        # 旧执行记录靠动作反查站点；无动作的跳过记录需从当时的判定过程恢复。
+        c.execute("UPDATE exec_logs SET site_name=COALESCE(("
+                  "SELECT s.name FROM actions a JOIN sites s ON s.id=a.site_id "
+                  "WHERE a.id=exec_logs.action_id), ("
+                  "SELECT s.name FROM devices d JOIN sites s ON s.id=d.site_id "
+                  "WHERE d.id=exec_logs.device_id), '') WHERE site_name=''")
+        for row in c.execute("SELECT id,timeline,decision_note,error FROM exec_logs "
+                             "WHERE site_name=''").fetchall():
+            try:
+                events = json.loads(row["timeline"] or "[]")
+            except (TypeError, ValueError):
+                events = []
+            texts = [event.get("text", "") for event in events if isinstance(event, dict)]
+            texts.extend((row["decision_note"] or "", row["error"] or ""))
+            for value in texts:
+                match = re.search(r"(?:命中站点|站点)「([^」]+)」", value)
+                if match:
+                    c.execute("UPDATE exec_logs SET site_name=? WHERE id=?",
+                              (match.group(1), row["id"]))
+                    break
     # 默认设置
     for k, v in [("web_password", "admin123"),
                  ("api_token", "lsk-" + uuid.uuid4().hex[:24]),
@@ -1516,16 +1546,16 @@ def exec_result_of(conn, log_id):
             "timeout": st == "running"}
 
 
-def save_alert_receipt(conn, response):
+def save_alert_receipt(conn, response, source="api", user_agent=""):
     """保存每次有效告警回调的判定结果，独立于设备执行记录。"""
     decision = response.get("decision") or {}
     reason = (response.get("skip_reason") or (response.get("result") or {}).get("reason")
               or decision.get("reason") or "")
     action = response.get("action") or {}
     cur = conn.execute(
-        "INSERT INTO alert_receipts(received_at,title,matched,rule_matched,executed,task_id,action_name,reason,response_json) "
-        "VALUES(?,?,?,?,?,?,?,?,?)",
-        (now(), response["title"], int(bool(response.get("matched"))),
+        "INSERT INTO alert_receipts(received_at,title,source,user_agent,matched,rule_matched,"
+        "executed,task_id,action_name,reason,response_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+        (now(), response["title"], source, user_agent[:512], int(bool(response.get("matched"))),
          int(bool(response.get("rule_matched"))),
          int(bool(response.get("executed"))), response.get("task_id"),
          action.get("name") or "", reason, json.dumps(response, ensure_ascii=False)))
@@ -1588,12 +1618,15 @@ def submit_action(conn, action, trigger, title, dry_run=0, rollback=0,
     mode = "演练" if dry_run else "切换"
     tl.append({"ts": now(), "kind": "info",
                "text": "任务入队（模式：%s，设备：%s）" % (mode, dev["name"])})
+    site = conn.execute("SELECT name FROM sites WHERE id=?",
+                        (action["site_id"] or dev["site_id"],)).fetchone()
     cur = conn.execute(
-        "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,alarm_title,"
+        "INSERT INTO exec_logs(action_id,action_name,site_name,device_id,device_name,trigger,alarm_title,"
         "dry_run,rollback,status,precheck_line,source_line,decision_note,target_line,started_at,timeline) "
-        "VALUES(?,?,?,?,?,?,?,?, 'running', '', ?,?,?,?,?)",
-        (action["id"], action["name"], dev["id"], dev["name"], trigger, title or "",
-         dry_run, rollback, source_line, decision_note, target_line or "", now(),
+        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        (action["id"], action["name"], site["name"] if site else "", dev["id"], dev["name"],
+         trigger, title or "", dry_run, rollback, "running", "", source_line,
+         decision_note, target_line or "", now(),
          json.dumps(tl, ensure_ascii=False)))
     conn.commit()
     log_id = cur.lastrowid
@@ -1708,14 +1741,17 @@ class Handler(BaseHTTPRequestHandler):
         except Exception:
             return {}
 
-    def _authorized(self, need_admin=True):
-        """cookie 或 API token 任一通过。"""
+    def _web_authenticated(self):
         cookie = self.headers.get("Cookie") or ""
         val = ""
         for part in cookie.split(";"):
             if part.strip().startswith(WEB_COOKIE + "="):
                 val = part.strip().split("=", 1)[1]
-        if check_session(val):
+        return check_session(val)
+
+    def _authorized(self, need_admin=True):
+        """cookie 或 API token 任一通过。"""
+        if self._web_authenticated():
             return True
         token = self.headers.get("X-API-Token") or ""
         conn = get_db()
@@ -1797,6 +1833,7 @@ class Handler(BaseHTTPRequestHandler):
                 page = max(1, int((qs.get("page") or ["1"])[0]))
                 keyword = (qs.get("q") or [""])[0].strip()
                 match_filter = (qs.get("rule_matched") or [""])[0]
+                source_filter = (qs.get("source") or [""])[0]
                 conditions, params = [], []
                 if keyword:
                     conditions.append("r.title LIKE ?")
@@ -1804,6 +1841,9 @@ class Handler(BaseHTTPRequestHandler):
                 if match_filter in ("0", "1"):
                     conditions.append("r.rule_matched=?")
                     params.append(int(match_filter))
+                if source_filter in ("api", "debug", "unknown"):
+                    conditions.append("r.source=?")
+                    params.append(source_filter)
                 where = " WHERE " + " AND ".join(conditions) if conditions else ""
                 total = conn.execute("SELECT COUNT(*) FROM alert_receipts r" + where, params).fetchone()[0]
                 rows = conn.execute(
@@ -1815,9 +1855,7 @@ class Handler(BaseHTTPRequestHandler):
             if path == "/api/logs":
                 limit = int((qs.get("limit") or ["50"])[0])
                 limit = max(1, min(limit, 300))
-                sql = ("SELECT e.*, COALESCE(si.name,'') AS site_name FROM exec_logs e "
-                       "LEFT JOIN actions a ON e.action_id=a.id "
-                       "LEFT JOIN sites si ON a.site_id=si.id ")
+                sql = "SELECT e.* FROM exec_logs e "
                 aid = (qs.get("action_id") or [None])[0]
                 if aid:
                     rows = conn.execute(sql + "WHERE e.action_id=? ORDER BY e.id DESC LIMIT ?",
@@ -1827,9 +1865,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._send_json([dict(r) for r in rows])
             m = re.match(r"^/api/logs/(\d+)$", path)
             if m:
-                log = conn.execute("SELECT e.*, COALESCE(si.name,'') AS site_name FROM exec_logs e "
-                                   "LEFT JOIN actions a ON e.action_id=a.id "
-                                   "LEFT JOIN sites si ON a.site_id=si.id WHERE e.id=?",
+                log = conn.execute("SELECT e.* FROM exec_logs e WHERE e.id=?",
                                    (int(m.group(1)),)).fetchone()
                 if not log:
                     return self._send_json({"error": "not found"}, 404)
@@ -1892,6 +1928,9 @@ class Handler(BaseHTTPRequestHandler):
                 copied = copy_device(conn, int(m.group(1)))
                 return self._send_json(copied if copied else {"error": "设备不存在"}, 200 if copied else 404)
             if path == "/api/alert":
+                receipt_source = ("debug" if body.get("source") == "debug"
+                                  and self._web_authenticated() else "api")
+                user_agent = self.headers.get("User-Agent") or ""
                 title = (body.get("title") or body.get("alarm_title") or body.get("name")
                          or (parse_qs(parsed.query).get("title") or [""])[0]).strip()
                 if not title:
@@ -1912,7 +1951,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "skip_reason": reason, "skip_reason_code": "unmatched",
                                 "result": {"status": "skipped", "before_line": "",
                                            "after_line": "", "target_line": "", "reason": reason}}
-                    save_alert_receipt(conn, response)
+                    save_alert_receipt(conn, response, receipt_source, user_agent)
                     return self._send_json(response)
                 act = plan["action"]
                 base = {"matched": True, "rule_matched": bool(plan.get("rule_matched")),
@@ -1954,13 +1993,13 @@ class Handler(BaseHTTPRequestHandler):
                     dev = conn.execute("SELECT name FROM devices WHERE id=?", (_did,)).fetchone() if _did else None
                     base["device"] = dict(dev) if dev else None
                     conn.execute(
-                        "INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
+                        "INSERT INTO exec_logs(action_id,action_name,site_name,device_id,device_name,trigger,"
                         "alarm_title,dry_run,rollback,status,source_line,decision_note,target_line,"
                         "started_at,finished_at,timeline) "
-                        "VALUES(?,?,?,?, 'api', ?,?,0, 'skipped', ?,?,?,?,?,?)",
+                        "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (act["id"] if act else None, act["name"] if act else "(无可用动作)",
-                         _did, dev["name"] if dev else "",
-                         title, dry_run, ",".join(plan.get("fault_lines") or []),
+                         plan.get("site_name") or "", _did, dev["name"] if dev else "",
+                         receipt_source, title, dry_run, 0, "skipped", ",".join(plan.get("fault_lines") or []),
                          (reason + " | " + plan.get("note", "")), plan.get("target_line") or "",
                          now(), now(), json.dumps(init_tl, ensure_ascii=False)))
                     conn.commit()
@@ -1968,11 +2007,11 @@ class Handler(BaseHTTPRequestHandler):
                                  "skip_reason_code": "no_target_line",
                                  "result": {"status": "skipped", "before_line": "", "after_line": "",
                                             "target_line": "", "reason": reason}})
-                    save_alert_receipt(conn, base)
+                    save_alert_receipt(conn, base, receipt_source, user_agent)
                     return self._send_json(base)
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
                 base["device"] = dict(dev) if dev else None
-                log_id, skip = submit_action(conn, act, "api", title, dry_run=dry_run,
+                log_id, skip = submit_action(conn, act, receipt_source, title, dry_run=dry_run,
                                              source_line=",".join(plan.get("fault_lines") or []),
                                              decision_note=plan.get("note", ""), init_tl=init_tl,
                                              target_line=plan.get("target_line") or "")
@@ -1986,7 +2025,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "reason": skip}
                 else:
                     base["executed"] = True
-                    receipt_id = save_alert_receipt(conn, base)
+                    receipt_id = save_alert_receipt(conn, base, receipt_source, user_agent)
                     # 同步等待执行结果（wait=0 时立即返回，仅带 task_id）
                     try:
                         wait_s = max(0, min(int(body.get("wait", 120)), 600))
@@ -1996,7 +2035,7 @@ class Handler(BaseHTTPRequestHandler):
                         base["result"] = wait_exec_result(conn, log_id, wait_s)
                         update_alert_receipt(conn, receipt_id, base)
                 if skip:
-                    save_alert_receipt(conn, base)
+                    save_alert_receipt(conn, base, receipt_source, user_agent)
                 return self._send_json(base)
             if path == "/api/logout":
                 return self._send_json({"ok": True}, headers={
@@ -2619,6 +2658,7 @@ pre.out .err{color:#fca5a5}
 
 /* ---- 执行详情：结构化元数据 / 折叠面板 / 终端窗口（参考稿样式） ---- */
 .meta-grid{display:grid;grid-template-columns:2fr 1fr 1.3fr;gap:16px 24px;background:var(--bg-subtle);padding:18px 20px;border-radius:10px;border:1px solid var(--border);margin-bottom:20px}
+.receipt-meta{grid-template-columns:1.8fr 1.2fr 1fr 1fr}
 .meta-item{display:flex;flex-direction:column;gap:4px}
 .meta-label{font-size:12px;color:var(--text-muted)}
 .meta-value{font-size:14px;font-weight:500;color:var(--text-main);word-break:break-all}
@@ -2777,6 +2817,7 @@ details summary:hover{color:var(--primary)}
   .settings-form .form-actions{margin-left:0}
   #p-alerttest pre.callback-result{width:100%;margin-left:0!important}
   .content-scroll{padding:16px}
+  .receipt-meta{grid-template-columns:repeat(2,minmax(0,1fr))}
 }
 </style>
 </head>
@@ -2840,12 +2881,13 @@ details summary:hover{color:var(--primary)}
         <div class="flt-group">
           <input id="ar_kw" placeholder="搜索告警标题" oninput="AR_PAGE=1;clearTimeout(window.__arT);window.__arT=setTimeout(loadAlertReceipts,300)">
           <select id="ar_matched" onchange="AR_PAGE=1;loadAlertReceipts()"><option value="">全部回调</option><option value="0">未命中切换规则</option><option value="1">已命中切换规则</option></select>
+          <select id="ar_source" onchange="AR_PAGE=1;loadAlertReceipts()"><option value="">全部来源</option><option value="api">API 回调</option><option value="debug">本系统调试</option><option value="unknown">来源未知</option></select>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="loadAlertReceipts()">刷新</button>
       </div>
-      <div class="table-responsive"><table class="data-table" style="table-layout:fixed;min-width:900px">
-        <colgroup><col style="width:16%"><col style="width:34%"><col style="width:12%"><col style="width:14%"><col style="width:24%"></colgroup>
-        <thead><tr><th>接收时间</th><th>告警标题</th><th>切换规则</th><th>处理结果</th><th>原因 / 任务</th></tr></thead>
+      <div class="table-responsive"><table class="data-table" style="table-layout:fixed;min-width:1100px">
+        <colgroup><col style="width:16%"><col style="width:10%"><col style="width:28%"><col style="width:11%"><col style="width:13%"><col style="width:22%"></colgroup>
+        <thead><tr><th>接收时间</th><th>来源</th><th>告警标题</th><th>切换规则</th><th>处理结果</th><th>原因 / 任务</th></tr></thead>
         <tbody id="artb"></tbody>
       </table></div>
       <div id="arpg"></div>
@@ -3164,6 +3206,7 @@ function refresh(p){
 let AR_PAGE=1,AR_ROWS=[];
 const AR_STATUS={success:["切线成功","ok"],running:["执行中","info"],
   skipped:["未切换","gray"],verify_failed:["验证未过","warn"],failed:["执行失败","bad"]};
+const AR_SOURCE={api:["API 回调","info"],debug:["本系统调试","warn"],unknown:["来源未知","gray"]};
 function receiptResult(r){
   if(!r.matched)return ["未命中","gray"];
   if(!r.executed)return ["未切换","warn"];
@@ -3174,18 +3217,21 @@ function receiptResult(r){
 function loadAlertReceipts(){
   const q=encodeURIComponent($("ar_kw").value.trim());
   const matched=$("ar_matched").value;
-  api("GET","/api/alert-receipts?page="+AR_PAGE+"&limit=20&q="+q+"&rule_matched="+matched).then(d=>{
+  const source=$("ar_source").value;
+  api("GET","/api/alert-receipts?page="+AR_PAGE+"&limit=20&q="+q+"&rule_matched="+matched+"&source="+source).then(d=>{
     AR_ROWS=d.items||[];
     $("artb").innerHTML=AR_ROWS.length?AR_ROWS.map(r=>{
       const res=receiptResult(r);
       const reason=r.task_error||r.reason||"";
+      const src=AR_SOURCE[r.source]||AR_SOURCE.unknown;
       return `<tr class="clickable" onclick="showReceipt(${r.id})">
         <td class="mono">${esc(r.received_at)}</td>
+        <td><span class="tag ${src[1]}">${src[0]}</span></td>
         <td class="cell1" title="${esc(r.title)}">${esc(r.title)}</td>
         <td><span class="tag ${r.rule_matched?'ok':'gray'}">${r.rule_matched?'已命中':'未命中'}</span></td>
         <td><span class="tag ${res[1]}">${res[0]}</span></td>
         <td class="cell1" title="${esc(reason)}">${r.task_id?'任务 #'+r.task_id+' · ':''}${esc(reason||'-')}</td>
-      </tr>`}).join(""):'<tr><td colspan="5"><div class="empty">暂无告警记录</div></td></tr>';
+      </tr>`}).join(""):'<tr><td colspan="6"><div class="empty">暂无告警记录</div></td></tr>';
     const pages=Math.max(1,Math.ceil((d.total||0)/20));
     $("arpg").innerHTML=`<div class="pager"><span class="pg-info">共 ${d.total||0} 条 · 第 ${AR_PAGE}/${pages} 页</span>
       <button class="pg-btn" onclick="AR_PAGE--;loadAlertReceipts()" ${AR_PAGE<=1?'disabled':''}>上一页</button>
@@ -3195,12 +3241,15 @@ function showReceipt(id){
   const r=AR_ROWS.find(x=>x.id===id);if(!r)return;
   let saved={};try{saved=JSON.parse(r.response_json||"{}")}catch(e){}
   const res=receiptResult(r);
+  const src=AR_SOURCE[r.source]||AR_SOURCE.unknown;
   $("mReceiptTitle").textContent="告警详情 #"+id;
-  $("mReceiptBody").innerHTML=`<div class="meta-grid">
+  $("mReceiptBody").innerHTML=`<div class="meta-grid receipt-meta">
     <div class="meta-item"><span class="meta-label">接收时间</span><span class="meta-value">${esc(r.received_at)}</span></div>
+    <div class="meta-item"><span class="meta-label">来源</span><span class="meta-value"><span class="tag ${src[1]}">${src[0]}</span></span></div>
     <div class="meta-item"><span class="meta-label">切换规则</span><span class="meta-value">${r.rule_matched?'已命中':'未命中'}</span></div>
     <div class="meta-item"><span class="meta-label">处理结果</span><span class="meta-value"><span class="tag ${res[1]}">${res[0]}</span></span></div>
-  </div><div style="margin:16px 0 8px;font-weight:600">告警标题</div><div style="overflow-wrap:anywhere">${esc(r.title)}</div>
+  </div><div style="margin:16px 0 8px;font-weight:600">User-Agent</div><div style="overflow-wrap:anywhere">${esc(r.user_agent||'-')}</div>
+  <div style="margin:16px 0 8px;font-weight:600">告警标题</div><div style="overflow-wrap:anywhere">${esc(r.title)}</div>
   <div style="margin:16px 0 8px;font-weight:600">判定说明</div><div style="overflow-wrap:anywhere">${esc(r.task_error||r.reason||saved.note||'-')}</div>
   ${r.task_id?`<button class="btn btn-sm btn-secondary" style="margin-top:14px" onclick="closeM('mReceipt');showLog(${r.task_id})">查看执行任务 #${r.task_id}</button>`:''}
   <div style="margin:20px 0 8px;font-weight:600">回调响应</div>
@@ -3276,7 +3325,7 @@ function loadLogs(){api("GET","/api/logs?limit=300").then(all=>{DATA.logs=all;LO
   $("logtb").innerHTML=ls.length?ls.map(l=>{const st=ST_TAG[l.status]||[esc(l.status),"gray"];
     return `<tr class="clickable" tabindex="0" aria-label="执行记录 ${l.id}，点击查看详情" title="点击查看执行详情" onkeydown="if(event.key==='Enter'||event.key===' ')showLog(${l.id})" onclick="showLog(${l.id})">
     <td><div class="log-ident"><strong>#${l.id}</strong><span class="mono" title="${esc(l.started_at)}">${esc(l.started_at)}</span></div></td>
-    <td><div class="log-flags"><span class="tag gray">${l.trigger=="api"?"API":"手动"}</span><span class="tag gray">${l.dry_run?"演练":"切换"}</span></div></td>
+    <td><div class="log-flags"><span class="tag gray">${l.trigger=="debug"?"调试":l.trigger=="api"?"API":"手动"}</span><span class="tag gray">${l.dry_run?"演练":"切换"}</span></div></td>
     <td class="cell1"><span title="${esc(l.site_name)}">${esc(l.site_name)||"-"}</span></td>
     <td class="cell1"><span class="keyword-text" style="max-width:100%" title="${esc(l.alarm_title)}">${esc(l.alarm_title)||"-"}</span></td>
     <td><div class="log-context"><strong title="${esc(l.action_name)}">${esc(l.action_name)||"-"}</strong><span title="${esc(l.device_name)}">${esc(l.device_name)||"未指定设备"}</span></div></td>
@@ -3780,7 +3829,7 @@ function replayRun(){const v=$("rp_days").dataset.val||"7 天";const d=parseInt(
           r.unmatched_titles.map(x=>`<tr><td><b>${x.count}</b></td><td><span class="keyword-text">${esc(x.title)}</span></td></tr>`).join("")+`</tbody></table></div>`;
     $("rp_out").innerHTML=h})}
 function testAlert(){const t=$("t_title").value.trim();if(!t)return showToast("请输入标题",1);
-  api("POST","/api/alert",{title:t}).then(r=>{const o=$("t_out");o.style.display="block";
+  api("POST","/api/alert",{title:t,source:"debug"}).then(r=>{const o=$("t_out");o.style.display="block";
     o.textContent=JSON.stringify(r,null,2);loadLogs()})}
 
 // ---- 启动 ----
