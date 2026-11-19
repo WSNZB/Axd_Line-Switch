@@ -3119,10 +3119,9 @@ function renderCoverage(){const o=$("cov_out");if(!o)return;
       const st=cov.length?`<span class="status-cell"><span class="dot-green"></span>已覆盖</span>`
                   :`<span class="status-cell"><span class="dot-red"></span>未覆盖</span>`;
       const rule=cov.length?`<div class="cov-rule-list ${cov.length>1?"multi":""}">${cov.map(c=>`<span class="cov-rule" title="${esc(c.name)} · 优先级 ${c.rank} · ${c.cmd?"命令已配":"缺命令"}"><span class="cov-rule-name">${esc(c.name)}</span><span class="cov-rule-priority">优先级 ${c.rank}</span><span class="tag ${c.cmd?"ok":"bad"}">${c.cmd?"已配":"缺命令"}</span></span>`).join("")}</div>`
-                           :'<span style="color:var(--text-faint)">-</span>';
-      const act=cov.length?'':'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="点此把该线路追加到规则阶梯">追加覆盖</button>';
-      return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td>${rule}</td><td style="text-align:right">${act}</td></tr>`}).join("");
-    const table=`<table class="data-table cov-tb"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:58%"><col style="width:12%"></colgroup><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则 / 优先级（1 最高）/ 命令</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+                           :'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="把该线路追加到规则阶梯">追加覆盖</button>';
+      return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td>${rule}</td></tr>`}).join("");
+    const table=`<table class="data-table cov-tb"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:70%"></colgroup><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则 / 优先级（1 最高）/ 命令</th></tr></thead><tbody>${rows}</tbody></table>`;
 
     return `<div class="cov-site">
       <div class="cov-site-hd"><b>${esc(s.name)}</b>
