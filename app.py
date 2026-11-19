@@ -2361,8 +2361,8 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .ops-cell{display:flex;gap:8px;justify-content:flex-end}
 .err-text{color:#b91c1c;font-size:12px;line-height:1.5}
 .data-table td.cell1{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.data-table.log-tb td{padding:6px 12px}
-.data-table.log-tb th{padding:8px 12px}
+.data-table.log-tb td{padding:10px 12px}
+.data-table.log-tb th{padding:10px 12px}
 
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
