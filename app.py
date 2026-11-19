@@ -2339,8 +2339,9 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .cov-tb{font-size:12.5px;table-layout:fixed}
 .cov-tb th{padding:9px 14px;font-size:11.5px}
 .cov-tb td{padding:9px 14px}
-.cov-stack{display:flex;flex-direction:column;gap:4px}
-.cov-stack>span{display:block;line-height:1.5}
+.cov-stack{display:flex;flex-direction:row;align-items:center;gap:8px;min-width:0;white-space:nowrap}
+.cov-stack>span{display:block;line-height:1.4;min-width:0}
+.cov-stack>.cov-cell1{flex:1 1 0}
 .cov-cell1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cov-ladders{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border2);display:flex;flex-direction:column;gap:8px}
 .ladder{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
