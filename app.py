@@ -2238,7 +2238,9 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .settings-form .kv .ctl{min-width:0}
 .settings-form .kv .ctl input{min-width:0}
 .settings-form .form-actions{display:flex;justify-content:flex-end;padding-top:4px;margin-left:178px}
-.callback-result{max-width:940px;width:calc(100% - 178px);max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word}
+#p-alerttest .settings-form{max-width:none}
+#p-alerttest .settings-form .kv{max-width:1200px}
+#p-alerttest pre.callback-result{max-width:none;width:calc(100% - 178px);max-height:max(280px,calc(100vh - 280px));box-sizing:border-box;overflow:auto;white-space:pre-wrap;word-break:break-word}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* ============ 卡片 ============ */
@@ -2594,7 +2596,7 @@ details summary:hover{color:var(--primary)}
   .settings-form .kv{grid-template-columns:1fr;gap:6px}
   .settings-form .kv label{text-align:left}
   .settings-form .form-actions{margin-left:0}
-  .callback-result{max-width:100%;margin-left:0!important}
+  #p-alerttest pre.callback-result{width:100%;margin-left:0!important}
   .content-scroll{padding:16px}
 }
 </style>
