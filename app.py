@@ -2339,10 +2339,12 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .cov-tb{font-size:12.5px;table-layout:fixed}
 .cov-tb th{padding:9px 14px;font-size:11.5px}
 .cov-tb td{padding:9px 14px}
-.cov-stack{display:flex;flex-direction:row;align-items:center;gap:8px;min-width:0;white-space:nowrap}
-.cov-stack>span{display:block;line-height:1.4;min-width:0}
-.cov-stack>.cov-cell1{flex:1 1 0}
-.cov-cell1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cov-rule-list{display:flex;align-items:center;gap:10px;min-width:0;white-space:nowrap}
+.cov-rule{display:inline-flex;align-items:center;gap:8px;min-width:0;max-width:100%;padding:3px 8px;border:1px solid var(--border);border-radius:6px;background:var(--bg-subtle)}
+.cov-rule-list.multi .cov-rule{max-width:calc(50% - 5px)}
+.cov-rule-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cov-rule-priority{flex:none;color:var(--text-muted);font-size:11px}
+.cov-rule .tag{flex:none}
 .cov-ladders{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border2);display:flex;flex-direction:column;gap:8px}
 .ladder{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .ladder-name{font-size:12px;color:var(--text-muted);min-width:150px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -3113,17 +3115,14 @@ function renderCoverage(){const o=$("cov_out");if(!o)return;
       arr.forEach((t,i)=>{if(!tgMap[t.line])tgMap[t.line]=[];
         if(!tgMap[t.line].some(c=>c.name===a.name))tgMap[t.line].push({name:a.name,rank:i+1,cmd:t.command_block})})});
     const done=ls.filter(l=>tgMap[l.name]).length;
-    const stack=(arr,fn)=>arr.length>1?`<div class="cov-stack">${arr.map(fn).join("")}</div>`:fn(arr[0]);
     const rows=ls.map(l=>{const cov=tgMap[l.name]||[];
       const st=cov.length?`<span class="status-cell"><span class="dot-green"></span>已覆盖</span>`
                   :`<span class="status-cell"><span class="dot-red"></span>未覆盖</span>`;
-      const rule=cov.length?stack(cov,c=>`<span class="cov-cell1" title="${esc(c.name)}">${esc(c.name)}</span>`)
+      const rule=cov.length?`<div class="cov-rule-list ${cov.length>1?"multi":""}">${cov.map(c=>`<span class="cov-rule" title="${esc(c.name)} · 优先级 ${c.rank} · ${c.cmd?"命令已配":"缺命令"}"><span class="cov-rule-name">${esc(c.name)}</span><span class="cov-rule-priority">优先级 ${c.rank}</span><span class="tag ${c.cmd?"ok":"bad"}">${c.cmd?"已配":"缺命令"}</span></span>`).join("")}</div>`
                            :'<span style="color:var(--text-faint)">-</span>';
-      const rank=cov.length?stack(cov,c=>`<span>${c.rank}</span>`):'-';
-      const cmd=cov.length?stack(cov,c=>c.cmd?'<span class="tag ok">已配</span>':'<span class="tag bad">缺命令</span>'):'-';
       const act=cov.length?'':'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="点此把该线路追加到规则阶梯">追加覆盖</button>';
-      return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td style="max-width:280px">${rule}</td><td style="text-align:center">${rank}</td><td>${cmd}</td><td style="text-align:right">${act}</td></tr>`}).join("");
-    const table=`<table class="data-table cov-tb"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:25%"><col style="width:12%"><col style="width:15%"><col style="width:18%"></colgroup><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则</th><th style="text-align:center">阶梯位次</th><th>切换命令</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+      return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td>${rule}</td><td style="text-align:right">${act}</td></tr>`}).join("");
+    const table=`<table class="data-table cov-tb"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:58%"><col style="width:12%"></colgroup><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则 / 优先级（1 最高）/ 命令</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
 
     return `<div class="cov-site">
       <div class="cov-site-hd"><b>${esc(s.name)}</b>
