@@ -2424,13 +2424,16 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .modal.show{display:flex;animation:fadeIn .18s ease}
 .modal .box{background:#fff;border-radius:var(--r-pop);width:780px;max-width:100%;box-shadow:var(--sh-3),0 24px 60px rgba(15,23,42,.28);animation:rise .22s cubic-bezier(.2,.9,.3,1.12);border:1px solid rgba(255,255,255,.6)}
 @keyframes rise{from{transform:translateY(14px);opacity:0}to{transform:none;opacity:1}}
-.mhd{display:flex;align-items:center;padding:18px 24px;border-bottom:1px solid var(--border);gap:12px;background:linear-gradient(180deg,#fff,var(--bg-subtle))}
+.mhd{display:flex;align-items:center;padding:18px 24px;border-bottom:1px solid var(--border);border-radius:var(--r-pop) var(--r-pop) 0 0;gap:12px;background:linear-gradient(180deg,#fff,var(--bg-subtle))}
 .mhd h3{font-size:15px;font-weight:650;flex:1}
 .mx{border:none;background:#f1f5f9;color:#64748b;width:28px;height:28px;border-radius:6px;cursor:pointer;font-size:14px;line-height:1;display:flex;align-items:center;justify-content:center;transition:all .2s}
 .mx:hover{background:var(--danger-bg);color:var(--danger)}
 .mbd{padding:8px 24px 8px;max-height:calc(100vh - 230px);overflow-y:auto}
 .mfoot{padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;align-items:center}
 .mfoot .sp{flex:1}
+#mLine .data-table{min-width:1020px}
+#mLine .data-table td{white-space:nowrap}
+#mLine .keyword-text{max-width:none;white-space:nowrap;word-break:normal}
 
 /* ============ 终端输出 ============ */
 pre.out{background:#0f172a;color:#cbd5e1;padding:14px 16px;border-radius:10px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.65;overflow:auto;max-height:280px;white-space:pre-wrap;border:1px solid #1e293b}
@@ -2862,7 +2865,7 @@ details summary:hover{color:var(--primary)}
 </div></div>
 
 <!-- 站点线路 -->
-<div class="modal" id="mLine"><div class="box" style="width:780px">
+<div class="modal" id="mLine"><div class="box" style="width:1120px;max-width:96vw">
   <div class="mhd"><h3 id="mLineTitle">站点线路</h3><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
