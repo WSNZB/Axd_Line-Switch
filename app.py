@@ -547,10 +547,8 @@ def plan_switch(conn, title, site_id=None):
             out["trace"] = _mk_trace()
             out.update({"allow": True, "action": a, "target": tg,
                         "target_line": tg["line"], "target_rank": rank,
-                        "note": ("规则「%s」选中阶梯第 1 目标线路 %s（首选切换）"
-                                 % (a["name"], tg["line"])) if rank == 1 else
-                                ("规则「%s」阶梯降级选中第 %d 目标线路 %s"
-                                 % (a["name"], rank, tg["line"]))})
+                        "note": "规则「%s」选中第 %d 优先级目标线路 %s"
+                                % (a["name"], rank, tg["line"])})
             return out
 
     out["trace"] = _mk_trace()
@@ -717,8 +715,8 @@ def line_steps_evidence_html(plan):
 
 def line_steps_evidence(plan):
     """把降级体检过程拼成可核对的证据文本（含真实请求 URL 与原始响应）。"""
-    ev = ["判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；随后按各切换规则内配置的"
-          "目标线路阶梯（顺序=优先级）逐条体检：用目标线路的告警关键字作为 gs 查询 AIOps"
+    ev = ["判定逻辑：故障线路 = 告警标题匹配站点线路的告警关键字；随后从各切换规则的"
+          "第 1 优先级目标线路开始逐条体检：用目标线路的告警关键字作为 gs 查询 AIOps"
           "（is_ignore=0，status 未处理0/处理中1，不按时间过滤），第一条无活跃告警且已配置"
           "本方向切换命令的目标线路即选中。"]
     for s in plan.get("steps") or []:
@@ -1771,7 +1769,7 @@ class Handler(BaseHTTPRequestHandler):
                 if plan.get("target_line"):
                     _rk = plan.get("target_rank") or 1
                     init_tl.append({"ts": now(), "kind": "ok",
-                                    "text": ("%s选中目标线路：%s（规则：%s，阶梯第 %d 位）"
+                                    "text": ("%s选中目标线路：%s（规则：%s，第 %d 优先级）"
                                              % ("降级" if _rk > 1 else "判定",
                                                 plan["target_line"],
                                                 act["name"] if act else "-", _rk))})
@@ -2698,7 +2696,7 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-header"><div class="flt-group"><div class="sel" id="f_act_site"></div></div><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
       <div class="table-responsive"><table class="data-table act-tb" style="table-layout:fixed;min-width:1320px"><thead><tr>
-        <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:300px">规则名 / 设备</th><th style="width:240px">目标阶梯（降级顺序）</th>
+        <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:300px">规则名 / 设备</th><th style="width:240px">目标线路优先级</th>
         <th>匹配关键词 / 正则（预检用）</th><th style="width:70px">冷却</th><th style="width:290px;text-align:right">执行操作</th></tr></thead>
       <tbody id="acttb"></tbody></table></div>
     </div>
@@ -2793,7 +2791,7 @@ details summary:hover{color:var(--primary)}
     <div><label>匹配关键词 / 正则（站点已配线路时仅预检用）</label><input id="a_kw" placeholder="选择故障线路后自动填充"></div>
   </div>
   <textarea id="a_rb" style="display:none"></textarea>
-  <label>目标线路阶梯（降级顺序=列表顺序，第一条最优先）<span class="q" data-tip="收到该线路告警后：按阶梯顺序逐条查询目标线路是否有未处理/处理中告警，选中第一条健康且配了切换命令的目标并下发它的命令块。&#10;每个目标的命令块建议为「全量状态」：undo 其它方向策略 + 添加本方向。&#10;期望关键词默认取该线路下一跳IP，用于切换后验证路由指向。">?</span></label>
+  <label>目标线路优先级（第 1 优先级最高）<span class="q" data-tip="收到该线路告警后：从第 1 优先级开始依次查询目标线路是否有未处理/处理中告警，选中第一条健康且配了切换命令的目标并下发它的命令块。&#10;每个目标的命令块建议为「全量状态」：undo 其它方向策略 + 添加本方向。&#10;期望关键词默认取该线路下一跳IP，用于切换后验证路由指向。">?</span></label>
   <div id="tgt_box" style="display:flex;flex-direction:column;gap:10px"></div>
   <button class="btn btn-secondary btn-sm" style="margin-top:10px" onclick="addTarget()">＋ 添加目标线路</button>
   <div class="grid2" style="margin-top:14px">
@@ -2916,7 +2914,7 @@ function logout(){api("POST","/api/logout").then(()=>location.reload())}
 // ---- 导航：顶部一级 + 左侧二级 ----
 const PAGE_INFO={dash:["执行记录","告警触发的切换任务历史、状态与结果证据"],
   match:["匹配预检","以告警标题校验规则命中与降级链路，不产生任何执行"],
-  actions:["切换动作","维护站点降级阶梯：目标线路顺序与各方向切换命令"],
+  actions:["切换动作","维护目标线路优先级与各方向切换命令"],
   devices:["设备管理","站点设备的连接凭据、线路识别命令与连通性"],
   sites:["站点管理","站点与其线路的告警关键字、下一跳映射"],
   settings:["全局设置","访问凭据、AIOps 接口与判定参数"],
@@ -3038,6 +3036,11 @@ function durTxt(l){if(!l.finished_at||!l.started_at)return "";
   if(!(t>=0))return "";
   const d=t>=86400?Math.floor(t/86400)+"天":t>=3600?Math.floor(t/3600)+"时"+Math.floor(t%3600/60)+"分":t>=60?Math.floor(t/60)+"分"+Math.round(t%60)+"秒":(t<1?Math.round(t*1000)+"毫秒":Math.round(t)+"秒");
   return ` <span style="color:var(--primary);font-weight:600">（共 ${d}）</span>`}
+function priorityText(s){return String(s||"")
+  .replace(/阶梯第\s*(\d+)\s*位/g,"第 $1 优先级")
+  .replace(/阶梯第\s*(\d+)\s*目标线路/g,"第 $1 优先级目标线路")
+  .replace(/阶梯降级选中第\s*(\d+)\s*目标线路/g,"降级选中第 $1 优先级目标线路")
+  .replace(/目标线路阶梯（顺序=优先级）/g,"第 1 优先级目标线路起")}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
@@ -3049,12 +3052,12 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   const c=CON[l.status]||[l.status,l.status];
   const fromLine=(l.precheck_line||l.source_line||"").split(" ")[0]||"-";
   const toLine=l.status==="success"?(l.target_line||"-"):(l.status==="skipped"||l.status==="cooldown_skip"?fromLine:"-");
-  let why=l.error||l.decision_note||"";
+  let why=priorityText(l.error||l.decision_note||"");
   why=why.replace(/^切换命令已下发，但/,"").replace(/，请检查命令块输出或改在验证命令块配置查询命令/,"").replace(/，可能路由未收敛或切换失败/,"");
   let h=`<div class="verdict ${c[0]}">
     <span class="verdict-tag">${c[1]}</span>
     <span class="verdict-route">${esc(fromLine)} → <b>${esc(toLine)}</b></span>
-    <span class="verdict-why" title="${esc(l.error||l.decision_note||"")}">${esc(why)}</span></div>
+    <span class="verdict-why" title="${esc(priorityText(l.error||l.decision_note||""))}">${esc(why)}</span></div>
   <div class="meta-grid">
     <div class="meta-item"><span class="meta-label">告警标题</span><span class="meta-value title">${esc(l.alarm_title)||"-"}</span></div>
     <div class="meta-item"><span class="meta-label">设备</span><span class="meta-value">${esc(l.device_name)||"-"}</span></div>
@@ -3085,11 +3088,11 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
         const ic=TL_IC[t.kind]||TL_IC.info;
         const panel=(title,body,open,tip)=>`<details class="tlx-panel"${open?" open":""}><summary class="tlx-panel-hd"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>${title}${tip?`<span class="q" data-tip="${tip}">?</span>`:""}<span class="tlx-panel-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></summary><div class="tlx-panel-bd">${body}</div></details>`;
         const termPre=x=>`<pre style="margin:0;background:#0f172a;color:#e2e8f0;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;padding:12px 14px;border-radius:6px;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all;line-height:1.6">${esc(x)}</pre>`;
-        const nested=(t.evh?panel("证据 · 线路体检",t.evh,t.kind=="bad","判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。")
+        const nested=(t.evh?panel("证据 · 线路体检",priorityText(t.evh),t.kind=="bad","判定逻辑：故障线路=告警标题匹配站点线路关键字；再从第 1 优先级目标线路起，用各目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。")
           :(t.ev?panel(t.step?"命令回显":"证据",termPre(t.ev),t.kind=="bad"):""));
         return `<div class="tlx-item ${t.kind||""}">
           <div class="tlx-ic"><div class="tlx-dot">${ic}</div>${idx<items.length-1?'<div class="tlx-line"></div>':''}</div>
-          <div class="tlx-c"><div class="tlx-hd"><h4>${esc(t.text)}</h4><span class="tlx-ts">${esc((t.ts||"").slice(11))}</span></div>
+          <div class="tlx-c"><div class="tlx-hd"><h4>${esc(priorityText(t.text))}</h4><span class="tlx-ts">${esc((t.ts||"").slice(11))}</span></div>
           ${nested?'<div class="tlx-bd">'+nested+'</div>':''}</div></div>`}).join("")+`</div></div>`;}
   if(l.session_log)h+=sessTerm("会话原文",l.session_log);
   if((l.steps||[]).length&&!tl.some(t=>t.step))h+=`<div class="timeline-title">命令执行<span class="q" data-tip="旧版记录的回退展示">?</span></div>`+
@@ -3120,10 +3123,10 @@ function renderCoverage(){const o=$("cov_out");if(!o)return;
     const rows=ls.map(l=>{const cov=tgMap[l.name]||[];
       const st=cov.length?`<span class="status-cell"><span class="dot-green"></span>已覆盖</span>`
                   :`<span class="status-cell"><span class="dot-red"></span>未覆盖</span>`;
-      const rule=cov.length?`<div class="cov-rule-list ${cov.length>1?"multi":""}">${cov.map(c=>`<span class="cov-rule" title="${esc(c.name)} · 优先级 ${c.rank} · ${c.cmd?"命令已配":"缺命令"}"><span class="cov-rule-name">${esc(c.name)}</span><span class="cov-rule-priority">优先级 ${c.rank}</span><span class="tag ${c.cmd?"ok":"bad"}">${c.cmd?"已配":"缺命令"}</span></span>`).join("")}</div>`
-                           :'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="把该线路追加到规则阶梯">追加覆盖</button>';
+      const rule=cov.length?`<div class="cov-rule-list ${cov.length>1?"multi":""}">${cov.map(c=>`<span class="cov-rule" title="${esc(c.name)} · 第 ${c.rank} 优先级 · ${c.cmd?"命令已配":"缺命令"}"><span class="cov-rule-name">${esc(c.name)}</span><span class="cov-rule-priority">第 ${c.rank} 优先级</span><span class="tag ${c.cmd?"ok":"bad"}">${c.cmd?"已配":"缺命令"}</span></span>`).join("")}</div>`
+                           :'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="把该线路追加为规则中的下一优先级目标">追加覆盖</button>';
       return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td>${rule}</td></tr>`}).join("");
-    const table=`<table class="data-table cov-tb"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:70%"></colgroup><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则 / 优先级（1 最高）/ 命令</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const table=`<table class="data-table cov-tb"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:70%"></colgroup><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则 / 目标优先级 / 命令</th></tr></thead><tbody>${rows}</tbody></table>`;
 
     return `<div class="cov-site">
       <div class="cov-site-hd"><b>${esc(s.name)}</b>
@@ -3139,7 +3142,7 @@ function newActionFor(siteId,lineId){
       TGT.push({line:l.name,command_block:"",verify_block:"display ip routing-table",
                 expect_keywords:l.nexthop_ip||"",nexthop:l.nexthop_ip||"",_lineId:l.id});
       renderTargets();
-      showToast("已把「"+l.name+"」追加为优先级 "+TGT.length+" 的目标，请补填该方向切换命令后保存")}
+      showToast("已把「"+l.name+"」追加为第 "+TGT.length+" 优先级目标，请补填该方向切换命令后保存")}
     return}
   editAction(0);
   $("a_site").value=siteId;refreshActionLines();
@@ -3159,7 +3162,7 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
     <td class="cell1"><span class="device-name" title="${esc(x.name)}">${esc(x.name)}</span><span class="device-host mono" title="${esc(x.protocol||"")}://${esc(x.host||"")}">${esc(x.protocol||"")}://${esc(x.host||"")}</span></td>
     <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
       if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
-      return arr.length?`<div class="ladder-tags">`+arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join('')+`</div>`:'<span class="tag gray">未指定</span>'})()}</td>
+      return arr.length?`<div class="ladder-tags">`+arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}"><b style="margin-right:3px">第 ${i+1} 优先级：</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join('')+`</div>`:'<span class="tag gray">未指定</span>'})()}</td>
     <td><span class="tag gray" style="margin-right:6px">${x.match_type=="regex"?"正则":"包含"}</span><span class="keyword-text" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;vertical-align:middle;max-width:calc(100% - 60px)" title="${esc(x.match_keywords)}">${esc(x.match_keywords)||'-'}</span></td>
     <td style="white-space:nowrap">${x.cooldown||"全局"}</td>
     <td><div class="ops-cell">
@@ -3200,7 +3203,7 @@ function renderTargets(skipRead){if(!skipRead)readTargetInputs();
       .map(l=>`<option value="${l.id}" ${String(l.id)===String(t._lineId)?"selected":""}>${esc(l.name)}${l.enabled?"":"（停用）"}</option>`).join("");
     return `<div data-i="${i}" style="border:1px solid var(--border);border-radius:8px;padding:10px 12px;background:#f8fafc">
       <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
-        <span style="font-size:12px;font-weight:600;color:var(--primary);background:var(--primary-bg);border-radius:12px;padding:2px 10px">优先级 ${i+1}</span>
+        <span style="font-size:12px;font-weight:600;color:var(--primary);background:var(--primary-bg);border-radius:12px;padding:2px 10px">第 ${i+1} 优先级</span>
         <select style="width:200px" onchange="targetLineChange(${i},this.value)">${opts}</select>
         <span style="font-size:12px;color:var(--text-muted)">${t.nexthop?("下一跳 "+esc(t.nexthop)):"（未配下一跳IP）"}</span>
         <span style="flex:1"></span>
@@ -3265,7 +3268,7 @@ function saveAction(){readTargetInputs();
   rollback_block:$("a_rb").value,cooldown:+$("a_cd").value||0,enabled:$("a_en").checked?1:0};
   const ts=TGT.filter(t=>t.line);
   if(!b.name||!b.device_id){showToast("规则名、目标设备必填",1);return}
-  if(!ts.length){showToast("请至少添加一个目标线路（降级阶梯）",1);return}
+  if(!ts.length){showToast("请至少添加第 1 优先级目标线路",1);return}
   if(ts.some(t=>!(t.command_block||"").trim())){showToast("每个目标线路都必须填写切换命令块",1);return}
   b.targets_json=JSON.stringify(ts.map(t=>({line:t.line,command_block:t.command_block,
     verify_block:t.verify_block,expect_keywords:t.expect_keywords,nexthop:t.nexthop})));
@@ -3289,7 +3292,7 @@ function execAction(id,dry){if(dry===false&&id===0)return;
   const tgs=x?actionTargets(x):[];
   const dev=x?(x.protocol||"")+"://"+(x.host||""):"";
   if(tgs.length>1){
-    const names=tgs.map((t,i)=>(i+1)+". "+t.line+(t.command_block?"":"（缺命令，不可选）")).join("\n");
+    const names=tgs.map((t,i)=>"第 "+(i+1)+" 优先级："+t.line+(t.command_block?"":"（缺命令，不可选）")).join("\n");
     const pick=prompt("规则「"+x.name+"」设备 "+dev+"\n选择本次执行的目标线路（输入序号）：\n"+names,"1");
     if(pick===null)return;
     const n=parseInt(pick||"1",10);const t=tgs[n-1];
