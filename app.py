@@ -533,9 +533,10 @@ def plan_switch(conn, title, site_id=None):
         tgs = parse_targets(a)
         if not tgs:
             continue
-        for tg in tgs:
+        for rank, tg in enumerate(tgs, 1):
             st = check_line(tg["line"])
             st["action"] = a["name"]
+            st["rank"] = rank
             out["steps"].append(dict(st))
             if st["status"] != "clear":
                 continue
@@ -544,8 +545,11 @@ def plan_switch(conn, title, site_id=None):
                 continue
             out["trace"] = _mk_trace()
             out.update({"allow": True, "action": a, "target": tg,
-                        "target_line": tg["line"],
-                        "note": "规则「%s」阶梯降级选中目标线路 %s" % (a["name"], tg["line"])})
+                        "target_line": tg["line"], "target_rank": rank,
+                        "note": ("规则「%s」选中阶梯第 1 目标线路 %s（首选切换）"
+                                 % (a["name"], tg["line"])) if rank == 1 else
+                                ("规则「%s」阶梯降级选中第 %d 目标线路 %s"
+                                 % (a["name"], rank, tg["line"]))})
             return out
 
     out["trace"] = _mk_trace()
@@ -1745,7 +1749,7 @@ class Handler(BaseHTTPRequestHandler):
                                      "fault_lines": plan.get("fault_lines"),
                                      "target_line": plan.get("target_line"),
                                      "steps": [{k: s.get(k) for k in ("line", "status",
-                                                                      "pending", "handling", "action")}
+                                                                      "pending", "handling", "action", "rank")}
                                                for s in plan.get("steps") or []]}}
                 # 逐条线路降级体检证据（真实 gs 请求 + 原始响应）
                 if plan.get("fault_lines"):
@@ -1756,9 +1760,12 @@ class Handler(BaseHTTPRequestHandler):
                                     "ev": line_steps_evidence(plan),
                                     "evh": line_steps_evidence_html(plan)})
                 if plan.get("target_line"):
+                    _rk = plan.get("target_rank") or 1
                     init_tl.append({"ts": now(), "kind": "ok",
-                                    "text": "降级判定选中目标线路：%s（规则：%s）"
-                                            % (plan["target_line"], act["name"] if act else "-")})
+                                    "text": ("%s选中目标线路：%s（规则：%s，阶梯第 %d 位）"
+                                             % ("降级" if _rk > 1 else "判定",
+                                                plan["target_line"],
+                                                act["name"] if act else "-", _rk))})
                 if not plan["allow"]:
                     reason = plan["reason"] or "判定不切换"
                     init_tl.append({"ts": now(), "kind": "bad", "text": "判定不切换：%s" % reason})
@@ -1894,7 +1901,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "legacy": p.get("legacy"),
                                 "action_name": p["action"]["name"] if p["action"] else None,
                                 "steps": [{k: s.get(k) for k in ("line", "status",
-                                                                 "pending", "handling", "action")}
+                                                                 "pending", "handling", "action", "rank")}
                                           for s in p.get("steps") or []]}
                     except Exception as e:
                         plan = {"error": str(e)}
@@ -2496,7 +2503,12 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
-      <div class="card-header"><span class="sp" style="flex:1"></span><button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
+      <div class="card-header"><span class="sp" style="flex:1"></span>
+        <select id="f_site" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" onchange="LOG_F.site=this.value;loadLogs()"><option value="">全部站点</option></select>
+        <select id="f_dev" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" onchange="LOG_F.dev=this.value;loadLogs()"><option value="">全部设备</option></select>
+        <select id="f_act" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" onchange="LOG_F.act=this.value;loadLogs()"><option value="">全部动作</option></select>
+        <input id="f_kw" placeholder="搜索标题/错误/动作关键字" style="width:190px;padding:6px 10px;font-size:12px" oninput="LOG_F.kw=this.value.trim();clearTimeout(window.__kwT);window.__kwT=setTimeout(loadLogs,300)">
+        <button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
       <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col><col style="width:148px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
       <thead><tr>
@@ -2792,7 +2804,14 @@ const STAT=[
  ["running","执行中","","",'<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>'],
  ["skipped","条件不满足","","",'<path d="M5 12h14"/><path d="M13 5l7 7-7 7"/>'],
  ["verify_failed","验证未过","var(--warn-d)","",'<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>']];
-let LOG_FILTER="";
+let LOG_FILTER="", LOG_F={site:"",dev:"",act:"",kw:""};
+let LOG_ALL=[];
+function fillFilterOpts(){
+  const sites={},devs={},acts={};
+  LOG_ALL.forEach(l=>{if(l.site_name)sites[l.site_name]=1;if(l.device_name)devs[l.device_name]=1;if(l.action_name)acts[l.action_name]=1});
+  const set=(id,keys)=>{const sel=$(id);const v=sel.value;
+    sel.innerHTML=sel.options[0].outerHTML+Object.keys(keys).sort().map(k=>`<option value="${esc(k)}"${k===v?" selected":""}>${esc(k)}</option>`).join("")};
+  set("f_site",sites);set("f_dev",devs);set("f_act",acts)}
 function loadStats(){api("GET","/api/stats").then(s=>{
   $("ver").textContent=s.version;
   $("stat").innerHTML=STAT.map(x=>`<div class="stat-card${LOG_FILTER===(x[0]=='total'?'':x[0])?" on":""}" title="点击筛选该状态" onclick="setLogFilter('${x[0]=='total'?'':x[0]}')">
@@ -2801,8 +2820,12 @@ function loadStats(){api("GET","/api/stats").then(s=>{
 function setLogFilter(st){LOG_FILTER=(LOG_FILTER===st?"":st);loadStats();loadLogs()}
 const ST_TAG={success:["成功","ok"],failed:["失败","bad"],running:["执行中","info"],cooldown_skip:["冷却跳过","gray"],
   verify_failed:["验证未过","warn"],skipped:["条件不满足","gray"],cooldown:["冷却中","warn"]};
-function loadLogs(){api("GET","/api/logs?limit=100").then(ls=>{DATA.logs=ls;
+function loadLogs(){api("GET","/api/logs?limit=300").then(ls=>{DATA.logs=ls;LOG_ALL=ls;fillFilterOpts();
   if(LOG_FILTER)ls=ls.filter(l=>l.status===LOG_FILTER);
+  if(LOG_F.site)ls=ls.filter(l=>l.site_name===LOG_F.site);
+  if(LOG_F.dev)ls=ls.filter(l=>l.device_name===LOG_F.dev);
+  if(LOG_F.act)ls=ls.filter(l=>l.action_name===LOG_F.act);
+  if(LOG_F.kw){const k=LOG_F.kw.toLowerCase();ls=ls.filter(l=>((l.alarm_title||"")+(l.error||"")+(l.action_name||"")).toLowerCase().includes(k))}
   $("logtb").innerHTML=ls.length?ls.map(l=>{const st=ST_TAG[l.status]||[esc(l.status),"gray"];
     return `<tr class="clickable" tabindex="0" onkeydown="if(event.key==='Enter')showLog(${l.id})" onclick="showLog(${l.id})">
     <td class="mono" style="color:var(--text-muted)">#${l.id}</td>
@@ -2818,6 +2841,11 @@ const TL_IC={ok:'<svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></s
   bad:'<svg viewBox="0 0 24 24"><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
   warn:'<svg viewBox="0 0 24 24"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   info:'<svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>'};
+function durTxt(l){if(!l.finished_at||!l.started_at)return "";
+  const t=(new Date(l.finished_at.replace(" ","T"))-new Date(l.started_at.replace(" ","T")))/1000;
+  if(!(t>=0))return "";
+  const d=t>=86400?Math.floor(t/86400)+"天":t>=3600?Math.floor(t/3600)+"时"+Math.floor(t%3600/60)+"分":t>=60?Math.floor(t/60)+"分"+Math.round(t%60)+"秒":Math.round(t)+"秒";
+  return ` <span style="color:var(--primary);font-weight:600">（共 ${d}）</span>`}
 function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   $("mLogTitle").innerHTML=`执行详情 <span>#${l.id} · ${esc(l.action_name)} · ${(ST_TAG[l.status]||[l.status])[0]}</span>`;
   const ARROW='<svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg>';
@@ -2838,7 +2866,7 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   <div class="meta-grid">
     <div class="meta-item"><span class="meta-label">告警标题</span><span class="meta-value title">${esc(l.alarm_title)||"-"}</span></div>
     <div class="meta-item"><span class="meta-label">设备</span><span class="meta-value">${esc(l.device_name)||"-"}</span></div>
-    <div class="meta-item"><span class="meta-label">耗时</span><span class="meta-value mono" style="font-size:13px;white-space:nowrap">${esc(l.started_at)} <span style="color:var(--text-muted)">→</span> ${esc((l.finished_at||"").slice(11))||"-"}</span></div>
+    <div class="meta-item"><span class="meta-label">耗时</span><span class="meta-value mono" style="font-size:13px;white-space:nowrap">${esc(l.started_at)} <span style="color:var(--text-muted)">→</span> ${esc((l.finished_at||"").slice(11))||"-"}${durTxt(l)}</span></div>
   </div>`;
   const SESS_IC='<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;vertical-align:-2px;margin-right:6px"><path d="M4 17l6-6-6-6"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
   const sessTerm=(title,text)=>{
