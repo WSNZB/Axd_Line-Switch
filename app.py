@@ -2084,6 +2084,8 @@ class Handler(BaseHTTPRequestHandler):
                 fields = {}
                 for k in ("name", "alarm_keywords", "nexthop_ip", "priority", "enabled", "remark", "site_id"):
                     if k in body:
+                        if k == "name" and not str(body[k] or "").strip():
+                            continue
                         fields[k] = body[k]
                 if fields:
                     sets = ",".join("%s=?" % k for k in fields)
@@ -2268,7 +2270,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .flt-group select:hover{border-color:#9aa8ba}
 .flt-group input{padding:0 12px;width:210px}
 .flt-group select:focus,.flt-group input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
-.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 22px;border-top:1px solid var(--border)}
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:10px 22px;border-bottom:1px solid var(--border);background:var(--bg-subtle)}
 .pager .pg-info{margin-right:auto;font-size:12px;color:var(--text-muted)}
 .pg-btn{border:1px solid var(--border2);background:#fff;color:var(--text-secondary);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;transition:all .15s}
 .pg-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
@@ -2577,13 +2579,13 @@ details summary:hover{color:var(--primary)}
         <input id="f_kw" placeholder="搜索标题/错误/动作关键字" oninput="LOG_F.kw=this.value.trim();clearTimeout(window.__kwT);window.__kwT=setTimeout(()=>{LOG_PAGE=1;loadLogs()},300)">
         </div>
         <button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
+      <div id="logpg"></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
       <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col style="width:300px"><col style="width:170px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>站点</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
       <tbody id="logtb"></tbody></table></div>
-      <div id="logpg"></div>
     </div>
   </div>
 
@@ -2611,12 +2613,11 @@ details summary:hover{color:var(--primary)}
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><h3>线路切换覆盖</h3>
-        <button class="btn btn-secondary btn-sm" onclick="loadActions()">刷新</button></div>
+      <div class="card-header"><h3>线路切换覆盖</h3></div>
       <div class="card-body" id="cov_out"></div>
     </div>
     <div class="card">
-      <div class="card-header"><h3>动作规则</h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
+      <div class="card-header"><div class="flt-group"><div class="sel" id="f_act_site"></div></div><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:300px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
         <th>匹配关键词 / 正则（预检用）</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
@@ -2780,7 +2781,7 @@ details summary:hover{color:var(--primary)}
 
 <!-- 站点线路 -->
 <div class="modal" id="mLine"><div class="box" style="width:780px">
-  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><span class="q" data-tip="线路是全站统一配置：告警关键词用于①识别告警说的是哪条线路②查 AIOps 判断该线路是否仍有活跃告警；下一跳IP用于识别设备当前运行在哪条线路上（线路映射只在此维护），并作为切换规则中该目标线路的期望验证关键词默认值。&#10;降级切换的先后顺序在「切换配置 → 切换动作」的规则阶梯里维护，此处不再设置优先级。">?</span><button class="mx" onclick="closeM('mLine')">✕</button></div>
+  <div class="mhd"><h3 id="mLineTitle">站点线路</h3><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
   <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" data-tip="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
@@ -2794,7 +2795,7 @@ details summary:hover{color:var(--primary)}
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mLine')">关闭</button>
     <span class="sp"></span>
-    <button class="btn btn-primary" onclick="addLine()">添加线路</button>
+    <button class="btn btn-primary" onclick="addLine()">＋ 添加线路</button>
   </div>
 </div></div>
 
@@ -3044,16 +3045,12 @@ function renderCoverage(){const o=$("cov_out");if(!o)return;
       const act=cov.length?'':'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="点此把该线路追加到规则阶梯">追加覆盖</button>';
       return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td style="max-width:280px">${rule}</td><td style="text-align:center">${rank}</td><td>${cmd}</td><td style="text-align:right">${act}</td></tr>`}).join("");
     const table=`<table class="data-table cov-tb"><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则</th><th style="text-align:center">阶梯位次</th><th>切换命令</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
-    const ladders=acts.map(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
-      if(!arr.length&&a.target_line)arr=[{line:a.target_line,command_block:a.command_block}];
-      if(!arr.length)return '';
-      const steps=arr.map((t,i)=>`${i>0?'<span class="ladder-arrow">→</span>':''}<span class="ladder-step${t.command_block?'':' miss'}" title="${t.command_block?'已配切换命令':'缺少本方向切换命令'}"><i>${i+1}</i>${esc(t.line)}</span>`).join("");
-      return `<div class="ladder"><span class="ladder-name" title="${esc(a.name)}">${esc(a.name)}</span>${steps}</div>`}).join("");
+
     return `<div class="cov-site">
       <div class="cov-site-hd"><b>${esc(s.name)}</b>
         <span class="cov-cnt ${done===ls.length?"ok":"warn"}">覆盖 ${done}/${ls.length}</span></div>
       <div class="cov-lines">${table}</div>
-      ${ladders?'<div class="cov-ladders">'+ladders+'</div>':''}</div>`}).join("")}
+</div>`}).join("")}
 function newActionFor(siteId,lineId){
   // 联动：站点已有规则 → 打开该规则编辑并把缺失线路追加到阶梯；否则新建规则预置该目标
   const ref=DATA.actions.find(a=>a.site_id==siteId&&a.enabled);
@@ -3075,6 +3072,8 @@ function newActionFor(siteId,lineId){
   $("mActTitle").textContent="新建切换规则（目标："+l.name+"）"}
 function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/sites"),api("GET","/api/devices"),api("GET","/api/lines")]).then(([a,s,d,lines])=>{
   DATA.actions=a;DATA.sites=s;DATA.devices=d;DATA.lines=lines;
+  fillActSiteOpts(s);
+  if(ACT_F.site){const sid=(DATA.sites.find(x=>x.name===ACT_F.site)||{}).id;a=a.filter(x=>x.site_id==sid)}
   $("acttb").innerHTML=a.length?a.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td class="cell1">${esc(x.site_name)||'<span style="color:var(--text-faint)">-</span>'}</td>
@@ -3092,6 +3091,11 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
       <button class="btn btn-sm btn-danger" onclick="delAction(${x.id})">删除</button></div></td></tr>`).join(""):
     '<tr><td colspan=7><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无切换规则</div></td></tr>';
   renderCoverage()})}
+let ACT_F={site:""};
+function fillActSiteOpts(sites){const el=$("f_act_site");if(!el||!el._opts)return void 0;
+  el._opts=sites.map(x=>x.name);
+  if(el.dataset.val&&!el._opts.includes(el.dataset.val)){el.dataset.val="";ACT_F.site="";
+    const lb=el.querySelector(".sel-lb");lb.textContent=el._ph;lb.classList.add("ph")}}
 function fillSelect(sel,list,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
   list.map(x=>`<option value="${x.id}">${esc(labelFirst?x.name:x.name+(x.host?" ("+x.host+")":""))}</option>`).join("")}
 let TGT=[];
@@ -3308,11 +3312,16 @@ function manageLines(siteId){const s=(DATA.sites||[]).find(x=>x.id==siteId)||{};
 function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
   DATA.lines=DATA.lines.filter(l=>l.site_id!=siteId).concat(ls);
   $("ltb").innerHTML=ls.length?ls.map(l=>`<tr>
-    <td><b>${esc(l.name)}</b></td><td><span class="keyword-text mono" style="color:var(--text-muted)">${esc(l.alarm_keywords)||'(空)'}</span></td>
-    <td class="mono" style="color:var(--text-muted)">${esc(l.nexthop_ip)||'-'}</td>
+    <td style="width:130px"><input id="ln_${l.id}" value="${esc(l.name)}" style="padding:6px 10px;font-size:12.5px"></td>
+    <td><input id="lk_${l.id}" value="${esc(l.alarm_keywords)}" placeholder="如 41.243.21.170,Airtel" style="padding:6px 10px;font-size:12.5px"></td>
+    <td style="width:170px"><input id="li_${l.id}" value="${esc(l.nexthop_ip)}" class="mono" placeholder="下一跳IP" style="padding:6px 10px;font-size:12.5px"></td>
     <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
-    <td><div class="ops-cell"><button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`).join(""):
+    <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="saveLine(${l.id})">保存</button>
+    <button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`).join(""):
     '<tr><td colspan=5><div class="empty">暂无线路</div></td></tr>'})}
+function saveLine(id){api("PUT","/api/lines/"+id,{
+  name:$("ln_"+id).value.trim(),alarm_keywords:$("lk_"+id).value.trim(),nexthop_ip:$("li_"+id).value.trim()
+  }).then(()=>{showToast("线路已保存");loadLines(+$("l_site").value);loadSites();loadActions&&loadActions()})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
   alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim()};
   if(!b.name)return showToast("线路名必填",1);
@@ -3386,7 +3395,8 @@ function testAlert(){const t=$("t_title").value.trim();if(!t)return showToast("�
 
 // ---- 启动 ----
 const PAGE_GROUP={dash:"monitor",match:"config",actions:"config",devices:"resource",sites:"resource",settings:"system",alerttest:"system"};
-function boot(){initSel("rp_days","7 天",v=>{});$("rp_days")._opts=["1 天","7 天","14 天","30 天"];
+function boot(){initSel("f_act_site","全部站点",v=>{ACT_F.site=v;loadActions()});
+  initSel("rp_days","7 天",v=>{});$("rp_days")._opts=["1 天","7 天","14 天","30 天"];
   $("rp_days").dataset.val="7 天";{const lb=$("rp_days").querySelector(".sel-lb");lb.textContent="7 天";lb.classList.remove("ph")}
   initSel("f_site","全部站点",v=>{LOG_F.site=v;LOG_PAGE=1;loadLogs()});
   initSel("f_dev","全部设备",v=>{LOG_F.dev=v;LOG_PAGE=1;loadLogs()});
