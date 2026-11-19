@@ -2183,7 +2183,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 /* ============ 左侧二级菜单 ============ */
 .app-row{flex:1;display:flex;min-height:0;overflow:hidden}
 .sidebar{width:196px;background:var(--bg-card);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;overflow-y:auto}
-.side-nav{padding:16px 12px}
+.side-nav{padding:14px 12px}
 .side-title{color:var(--text-muted);font-size:11px;font-weight:600;margin-bottom:10px;padding-left:10px;letter-spacing:1px}
 .nav-item{display:flex;align-items:center;padding:9px 12px;color:#475569;font-size:13px;border-radius:6px;margin-bottom:4px;transition:all .2s;cursor:pointer;border:none;background:none;width:100%;text-align:left}
 .nav-item svg{margin-right:10px;width:17px;height:17px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0}
@@ -2232,6 +2232,16 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .data-table tr:last-child td{border-bottom:none}
 .data-table tr.clickable{cursor:pointer}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
+.flt-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0}
+.flt-group select,.flt-group input{height:34px;font-size:13px;border:1px solid var(--border2);border-radius:var(--r-ctl);background:#fff;color:var(--text-main);outline:none;transition:border-color .15s,box-shadow .15s}
+.flt-group select{padding:0 30px 0 12px;width:auto}
+.flt-group input{padding:0 12px;width:210px}
+.flt-group select:focus,.flt-group input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
+.pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 22px;border-top:1px solid var(--border)}
+.pager .pg-info{margin-right:auto;font-size:12px;color:var(--text-muted)}
+.pg-btn{border:1px solid var(--border2);background:#fff;color:var(--text-secondary);font-size:12px;padding:5px 12px;border-radius:6px;cursor:pointer;transition:all .15s}
+.pg-btn:hover:not(:disabled){border-color:var(--primary);color:var(--primary)}
+.pg-btn:disabled{opacity:.45;cursor:not-allowed}
 .empty{padding:44px 24px;text-align:center;color:var(--text-faint);font-size:13px;line-height:1.8}
 .empty svg{width:34px;height:34px;display:block;margin:0 auto 12px;opacity:.45;fill:none;stroke:currentColor;stroke-width:1.5}
 
@@ -2252,8 +2262,24 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .tag.warn{background:var(--warn-bg);color:var(--warn-d);box-shadow:inset 0 0 0 1px var(--warn-bd)}
 .tag.info{background:var(--info-bg);color:var(--info-d);box-shadow:inset 0 0 0 1px var(--info-bd)}
 .tag.gray{background:var(--bg-hover);color:var(--text-muted);box-shadow:inset 0 0 0 1px #e2e8f0}
-.cov-row{display:flex;align-items:center;gap:12px;padding:9px 0;border-bottom:1px dashed var(--border)}
-.cov-row:last-child{border-bottom:none}
+.cov-site{border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:14px;background:var(--bg-subtle)}
+.cov-site:last-child{margin-bottom:0}
+.cov-site-hd{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+.cov-site-hd b{font-size:13.5px;font-weight:650}
+.cov-cnt{margin-left:auto;font-size:12px;font-weight:600;padding:2px 10px;border-radius:999px}
+.cov-cnt.ok{color:var(--success-d);background:var(--success-bg)}
+.cov-cnt.warn{color:var(--warn-d);background:var(--warn-bg)}
+.cov-cnt.gray{color:var(--text-muted);background:var(--bg-hover)}
+.cov-none{font-size:12px;color:var(--text-faint)}
+.cov-lines{display:flex;flex-wrap:wrap;gap:8px}
+.cov-ladders{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border2);display:flex;flex-direction:column;gap:8px}
+.ladder{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ladder-name{font-size:12px;color:var(--text-muted);min-width:150px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.ladder-step{display:inline-flex;align-items:center;gap:6px;background:#fff;border:1px solid var(--border2);border-radius:6px;padding:3px 10px;font-size:12px;font-weight:550;color:var(--text-main)}
+.ladder-step i{font-style:normal;font-size:10px;font-weight:700;color:#fff;background:var(--text-faint);border-radius:50%;width:15px;height:15px;display:inline-flex;align-items:center;justify-content:center}
+.ladder-step.miss{border-color:var(--danger-bd);color:var(--danger-d)}
+.ladder-step.miss i{background:var(--danger)}
+.ladder-arrow{color:var(--text-faint);font-size:12px}
 .cov-chip{display:inline-flex;align-items:center;gap:6px;padding:4px 12px;border-radius:999px;font-size:12.5px;font-weight:550;border:1px solid transparent;white-space:nowrap;transition:all .15s}
 .cov-chip i{font-style:normal;font-size:11px;opacity:.7}
 .cov-chip.ok{background:var(--success-bg);color:var(--success-d);border-color:var(--success-bd)}
@@ -2458,7 +2484,7 @@ details summary:hover{color:var(--primary)}
   .brand{margin-right:12px}
   .top-nav button{padding:8px 12px;font-size:13px}
   .sidebar{width:56px;flex-basis:56px}
-  .side-title,.nav-item span{display:none}
+  .nav-item span{display:none}
   .nav-item{justify-content:center;padding:11px}
   .nav-item svg{margin-right:0}
   .stat-grid,.grid2,.grid3,.kv{grid-template-columns:1fr}
@@ -2503,11 +2529,13 @@ details summary:hover{color:var(--primary)}
   <div class="page-view active" id="p-dash">
     <div class="stat-grid stat-6" id="stat"></div>
     <div class="card">
-      <div class="card-header"><span class="sp" style="flex:1"></span>
-        <select id="f_site" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" onchange="LOG_F.site=this.value;loadLogs()"><option value="">全部站点</option></select>
-        <select id="f_dev" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" onchange="LOG_F.dev=this.value;loadLogs()"><option value="">全部设备</option></select>
-        <select id="f_act" style="width:auto;padding:6px 28px 6px 10px;font-size:12px" onchange="LOG_F.act=this.value;loadLogs()"><option value="">全部动作</option></select>
-        <input id="f_kw" placeholder="搜索标题/错误/动作关键字" style="width:190px;padding:6px 10px;font-size:12px" oninput="LOG_F.kw=this.value.trim();clearTimeout(window.__kwT);window.__kwT=setTimeout(loadLogs,300)">
+      <div class="card-header">
+        <div class="flt-group">
+        <select id="f_site" onchange="LOG_F.site=this.value;LOG_PAGE=1;loadLogs()"><option value="">全部站点</option></select>
+        <select id="f_dev" onchange="LOG_F.dev=this.value;LOG_PAGE=1;loadLogs()"><option value="">全部设备</option></select>
+        <select id="f_act" onchange="LOG_F.act=this.value;LOG_PAGE=1;loadLogs()"><option value="">全部动作</option></select>
+        <input id="f_kw" placeholder="搜索标题/错误/动作关键字" oninput="LOG_F.kw=this.value.trim();clearTimeout(window.__kwT);window.__kwT=setTimeout(()=>{LOG_PAGE=1;loadLogs()},300)">
+        </div>
         <button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
       <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col><col style="width:148px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
@@ -2515,6 +2543,7 @@ details summary:hover{color:var(--primary)}
         <th>ID</th><th>时间</th><th>触发</th><th>站点</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
       <tbody id="logtb"></tbody></table></div>
+      <div id="logpg"></div>
     </div>
   </div>
 
@@ -2557,7 +2586,9 @@ details summary:hover{color:var(--primary)}
   <!-- 设备管理 -->
   <div class="page-view" id="p-devices">
     <div class="card">
-      <div class="card-header"><span class="sp" style="flex:1"></span><button class="btn btn-primary" onclick="editDevice(0)">＋ 新建设备</button></div>
+      <div class="card-header">
+        <div class="flt-group"><input id="df_kw" placeholder="搜索设备名/IP/站点" oninput="DEV_KW=this.value.trim();loadDevices()"></div>
+        <button class="btn btn-primary" onclick="editDevice(0)">＋ 新建设备</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">设备名 / 地址</th><th style="width:110px">站点</th>
         <th style="width:80px">协议</th><th style="width:100px">账号</th><th style="width:70px">超时</th>
@@ -2569,7 +2600,9 @@ details summary:hover{color:var(--primary)}
   <!-- 站点管理 -->
   <div class="page-view" id="p-sites">
     <div class="card">
-      <div class="card-header"><span class="sp" style="flex:1"></span><button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
+      <div class="card-header">
+        <div class="flt-group"><input id="sf_kw" placeholder="搜索站点名/线路" oninput="SITE_KW=this.value.trim();loadSites()"></div>
+        <button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:220px">站点名称</th><th>线路</th><th style="width:220px">备注</th><th style="width:220px;text-align:right">操作</th></tr></thead>
       <tbody id="sitetb"></tbody></table></div>
@@ -2771,8 +2804,7 @@ const NAV_GROUPS={
 let CUR_PAGE="dash";
 function buildSideNav(g){
   const grp=NAV_GROUPS[g];
-  $("sideNav").innerHTML='<div class="side-title">'+grp.title+'</div>'+
-    grp.items.map(it=>`<button class="nav-item${it[0]==CUR_PAGE?" active":""}" data-p="${it[0]}"><svg viewBox="0 0 24 24">${it[2]}</svg><span>${it[1]}</span></button>`).join("");
+  $("sideNav").innerHTML=grp.items.map(it=>`<button class="nav-item${it[0]==CUR_PAGE?" active":""}" data-p="${it[0]}"><svg viewBox="0 0 24 24">${it[2]}</svg><span>${it[1]}</span></button>`).join("");
   document.querySelectorAll("#sideNav .nav-item").forEach(b=>b.onclick=()=>openPage(b.dataset.p));
 }
 function openPage(p){
@@ -2817,15 +2849,29 @@ function loadStats(){api("GET","/api/stats").then(s=>{
   $("stat").innerHTML=STAT.map(x=>`<div class="stat-card${LOG_FILTER===(x[0]=='total'?'':x[0])?" on":""}" title="点击筛选该状态" onclick="setLogFilter('${x[0]=='total'?'':x[0]}')">
     <div class="stat-ic"><svg viewBox="0 0 24 24">${x[4]}</svg></div>
     <div><b${x[2]?` style="color:${x[2]}"`:""}>${s[x[0]]}</b><span>${x[1]}</span></div></div>`).join("")})}
-function setLogFilter(st){LOG_FILTER=(LOG_FILTER===st?"":st);loadStats();loadLogs()}
+function setLogFilter(st){LOG_FILTER=(LOG_FILTER===st?"":st);LOG_PAGE=1;loadStats();loadLogs()}
 const ST_TAG={success:["成功","ok"],failed:["失败","bad"],running:["执行中","info"],cooldown_skip:["冷却跳过","gray"],
   verify_failed:["验证未过","warn"],skipped:["条件不满足","gray"],cooldown:["冷却中","warn"]};
-function loadLogs(){api("GET","/api/logs?limit=300").then(ls=>{DATA.logs=ls;LOG_ALL=ls;fillFilterOpts();
+const LOG_PER=15;let LOG_PAGE=1;
+function logsFiltered(){let ls=LOG_ALL.slice();
   if(LOG_FILTER)ls=ls.filter(l=>l.status===LOG_FILTER);
   if(LOG_F.site)ls=ls.filter(l=>l.site_name===LOG_F.site);
   if(LOG_F.dev)ls=ls.filter(l=>l.device_name===LOG_F.dev);
   if(LOG_F.act)ls=ls.filter(l=>l.action_name===LOG_F.act);
   if(LOG_F.kw){const k=LOG_F.kw.toLowerCase();ls=ls.filter(l=>((l.alarm_title||"")+(l.error||"")+(l.action_name||"")).toLowerCase().includes(k))}
+  return ls}
+function setLogPage(n){LOG_PAGE=n;loadLogs()}
+function loadLogs(){api("GET","/api/logs?limit=300").then(all=>{DATA.logs=all;LOG_ALL=all;fillFilterOpts();
+  const fl=logsFiltered();
+  const pages=Math.max(1,Math.ceil(fl.length/LOG_PER));
+  if(LOG_PAGE>pages)LOG_PAGE=pages;
+  const ls=fl.slice((LOG_PAGE-1)*LOG_PER,(LOG_PAGE-1)*LOG_PER+LOG_PER);
+  const pg=$("logpg");
+  if(pg)pg.innerHTML=fl.length>LOG_PER?`<div class="pager"><span class="pg-info">共 ${fl.length} 条 · 第 ${LOG_PAGE}/${pages} 页</span>
+    <button class="pg-btn" ${LOG_PAGE<=1?"disabled":""} onclick="setLogPage(1)">首页</button>
+    <button class="pg-btn" ${LOG_PAGE<=1?"disabled":""} onclick="setLogPage(${LOG_PAGE-1})">上一页</button>
+    <button class="pg-btn" ${LOG_PAGE>=pages?"disabled":""} onclick="setLogPage(${LOG_PAGE+1})">下一页</button>
+    <button class="pg-btn" ${LOG_PAGE>=pages?"disabled":""} onclick="setLogPage(${pages})">末页</button></div>`:"";
   $("logtb").innerHTML=ls.length?ls.map(l=>{const st=ST_TAG[l.status]||[esc(l.status),"gray"];
     return `<tr class="clickable" tabindex="0" onkeydown="if(event.key==='Enter')showLog(${l.id})" onclick="showLog(${l.id})">
     <td class="mono" style="color:var(--text-muted)">#${l.id}</td>
@@ -2914,26 +2960,29 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
 
 // ---- 动作 ----
 function renderCoverage(){const o=$("cov_out");if(!o)return;
-  const tip='<div style="font-size:12px;color:var(--text-muted);margin-bottom:10px">一条切换规则 = 一个降级阶梯：规则内按顺序配置多个目标线路及各自的切换命令。告警触发后先用<b>线路告警关键字</b>识别故障线路，再按阶梯顺序逐条查询目标线路是否有未处理/处理中告警，选中第一条健康目标并下发它的命令。点红色线路可追加到规则阶梯。</div>';
-  if(!DATA.sites.length){o.innerHTML=tip+'<div class="empty">暂无站点</div>';return}
-  o.innerHTML=tip+DATA.sites.map(s=>{
+  if(!DATA.sites.length){o.innerHTML='<div class="empty">暂无站点</div>';return}
+  o.innerHTML=DATA.sites.map(s=>{
     const ls=DATA.lines.filter(l=>l.site_id==s.id);
-    if(!ls.length)return `<div class="cov-row"><b style="min-width:120px">${esc(s.name)}</b>
-      <span style="color:var(--text-faint);font-size:12px">未维护线路：该站点走动作关键词兼容匹配（无降级）</span></div>`;
+    if(!ls.length)return `<div class="cov-site"><div class="cov-site-hd"><b>${esc(s.name)}</b><span class="cov-cnt gray">未维护线路</span></div>
+      <div class="cov-none">该站点未配置线路，走动作关键词兼容匹配（无降级能力）</div></div>`;
     const acts=DATA.actions.filter(a=>a.site_id==s.id&&a.enabled);
     let tgMap={};acts.forEach(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
       if(!arr.length&&a.target_line)arr=[{line:a.target_line,command_block:a.command_block}];
       arr.forEach(t=>{if(!tgMap[t.line])tgMap[t.line]=a.name})});
+    const done=ls.filter(l=>tgMap[l.name]).length;
     const chips=ls.map(l=>tgMap[l.name]
       ?`<span class="cov-chip ok" title="规则「${esc(tgMap[l.name])}」已含该目标">${esc(l.name)}</span>`
-      :`<span class="cov-chip bad" title="没有规则包含「切到${esc(l.name)}」，点此追加到规则阶梯" onclick="newActionFor(${s.id},${l.id})">${esc(l.name)}</span>`).join("");
-    const done=ls.filter(l=>tgMap[l.name]).length;
-    const ladder=acts.map(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
+      :`<span class="cov-chip bad" title="没有规则包含「切到${esc(l.name)}」，点此追加到规则阶梯" onclick="newActionFor(${s.id},${l.id})">${esc(l.name)} 缺规则</span>`).join("");
+    const ladders=acts.map(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
       if(!arr.length&&a.target_line)arr=[{line:a.target_line,command_block:a.command_block}];
-      return arr.length?`<div style="font-size:12px;color:var(--text-muted);margin-top:4px">└ ${esc(a.name)}：${arr.map((t,i)=>`<span style="color:${t.command_block?'var(--text-main)':'var(--danger-d)'}">${i+1}.${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(' → ')}</div>`:''}).join("");
-    return `<div class="cov-row" style="align-items:flex-start"><b style="min-width:120px;padding-top:5px">${esc(s.name)}</b>
-      <div style="flex:1"><div style="display:flex;flex-wrap:wrap;gap:8px;align-items:center">${chips}</div>${ladder}</div>
-      <span style="font-size:12px;color:${done===ls.length?"var(--success-d)":"var(--warn-d)"}">覆盖 ${done}/${ls.length}</span></div>`}).join("")}
+      if(!arr.length)return '';
+      const steps=arr.map((t,i)=>`${i>0?'<span class="ladder-arrow">→</span>':''}<span class="ladder-step${t.command_block?'':' miss'}" title="${t.command_block?'已配切换命令':'缺少本方向切换命令'}"><i>${i+1}</i>${esc(t.line)}</span>`).join("");
+      return `<div class="ladder"><span class="ladder-name" title="${esc(a.name)}">${esc(a.name)}</span>${steps}</div>`}).join("");
+    return `<div class="cov-site">
+      <div class="cov-site-hd"><b>${esc(s.name)}</b>
+        <span class="cov-cnt ${done===ls.length?"ok":"warn"}">覆盖 ${done}/${ls.length}</span></div>
+      <div class="cov-lines">${chips}</div>
+      ${ladders?'<div class="cov-ladders">'+ladders+'</div>':''}</div>`}).join("")}
 function newActionFor(siteId,lineId){
   // 联动：站点已有规则 → 打开该规则编辑并把缺失线路追加到阶梯；否则新建规则预置该目标
   const ref=DATA.actions.find(a=>a.site_id==siteId&&a.enabled);
@@ -3099,7 +3148,9 @@ function execAction(id,dry){if(dry===false&&id===0)return;
   go("")}
 
 // ---- 设备 ----
+let DEV_KW="";
 function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
+  if(DEV_KW){const k=DEV_KW.toLowerCase();d=d.filter(x=>((x.name||"")+(x.host||"")+(x.site_name||"")).toLowerCase().includes(k))}
   $("devtb").innerHTML=d.length?d.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
@@ -3155,8 +3206,11 @@ function testDeviceByIdStatus(id){api("POST","/api/devices/"+id+"/status",{}).th
     showToast(t)}else showToast("查询失败: "+(r.error||""),1)})}
 
 // ---- 站点 ----
+let SITE_KW="";
 function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines")]).then(([s,lines])=>{
   DATA.sites=s;DATA.lines=lines;
+  if(SITE_KW){const k=SITE_KW.toLowerCase();
+    s=s.filter(x=>((x.name||"")+(x.remark||"")).toLowerCase().includes(k)||lines.some(l=>l.site_id==x.id&&(l.name||"").toLowerCase().includes(k)))}
   $("sitetb").innerHTML=s.length?s.map(x=>{
     const ls=lines.filter(l=>l.site_id==x.id);
     return `<tr>
