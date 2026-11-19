@@ -2223,6 +2223,24 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .content-scroll{flex:1;overflow-y:auto;padding:26px 32px 40px}
 .page-view{display:none;width:100%;max-width:1800px;margin:0 auto}
 .page-view.active{display:block;animation:fadeIn .22s ease}
+@media (min-width:1001px){
+  #p-dash.active{height:calc(100vh - 126px);display:flex;flex-direction:column}
+  #p-dash>.card{flex:1;min-height:340px;display:flex;flex-direction:column;margin-bottom:0}
+  #p-dash>.card>.table-responsive{flex:1;min-height:0}
+  #p-dash #logpg{margin-top:auto}
+}
+#p-settings .card{max-width:1120px}
+#p-alerttest .card{max-width:1040px}
+#p-settings .card-body,#p-alerttest .card-body{padding:26px 30px}
+.settings-intro{margin-bottom:20px}
+.settings-intro h3{font-size:15px;font-weight:650;color:var(--text-main)}
+.settings-intro p{margin-top:5px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
+.settings-form{max-width:940px}
+.settings-form .kv{grid-template-columns:160px minmax(0,1fr);gap:18px}
+.settings-form .kv .ctl{min-width:0}
+.settings-form .kv .ctl input{min-width:0}
+.settings-form .form-actions{display:flex;justify-content:flex-end;padding-top:4px;margin-left:178px}
+.callback-result{max-width:940px;width:calc(100% - 178px);max-height:320px;overflow:auto;white-space:pre-wrap;word-break:break-word}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
 
 /* ============ 卡片 ============ */
@@ -2318,7 +2336,9 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .ladder-tags .tag{margin:0}
 .act-tb td{padding:10px 14px}
 .act-tb th{padding:9px 14px}
-.cov-tb{font-size:12.5px}
+.act-tb .device-name,.act-tb .device-host{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.act-tb .device-host{margin:3px 0 0!important;font-size:11px}
+.cov-tb{font-size:12.5px;table-layout:fixed}
 .cov-tb th{padding:9px 14px;font-size:11.5px}
 .cov-tb td{padding:9px 14px}
 .cov-stack{display:flex;flex-direction:column;gap:4px}
@@ -2347,15 +2367,15 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 /* ============ 统计卡 ============ */
 .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin-bottom:18px}
 .stat-grid.stat-6{grid-template-columns:repeat(6,1fr)}
-.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-card);padding:12px 18px;display:flex;align-items:center;gap:15px;box-shadow:var(--sh-1);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
+.stat-card{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--r-card);padding:9px 15px;display:flex;align-items:center;gap:12px;box-shadow:var(--sh-1);cursor:pointer;transition:border-color .15s,box-shadow .15s,transform .15s}
 .stat-card:hover{border-color:var(--border2);box-shadow:var(--sh-2);transform:translateY(-1px)}
 .stat-card.on{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
 tr.row-off td{opacity:.55}
 tr.row-off td .tag{filter:saturate(.4)}
 ,input:focus-visible,select:focus-visible,tr.clickable:focus-visible{outline:2px solid var(--primary);outline-offset:2px}
 @media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
-.stat-ic{width:38px;height:38px;border-radius:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg-hover);color:var(--text-muted)}
-.stat-ic svg{width:20px;height:20px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.stat-ic{width:34px;height:34px;border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;background:var(--bg-hover);color:var(--text-muted)}
+.stat-ic svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
 .stat-card b{font-size:22px;font-weight:750;display:block;line-height:1.2;font-variant-numeric:tabular-nums}
 .stat-card span{color:var(--text-muted);font-size:12.5px}
 
@@ -2565,6 +2585,10 @@ details summary:hover{color:var(--primary)}
   .stat-grid,.grid2,.grid3,.kv{grid-template-columns:1fr}
   .stat-grid.stat-6{grid-template-columns:repeat(3,1fr)}
   .kv label{text-align:left}
+  .settings-form .kv{grid-template-columns:1fr;gap:6px}
+  .settings-form .kv label{text-align:left}
+  .settings-form .form-actions{margin-left:0}
+  .callback-result{max-width:100%;margin-left:0!important}
   .content-scroll{padding:16px}
 }
 </style>
@@ -2613,7 +2637,7 @@ details summary:hover{color:var(--primary)}
         </div>
         <button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
-      <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col style="width:300px"><col style="width:170px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
+      <colgroup><col style="width:58px"><col style="width:156px"><col style="width:72px"><col style="width:100px"><col style="width:280px"><col style="width:190px"><col style="width:140px"><col style="width:64px"><col style="width:104px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>站点</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
@@ -2702,12 +2726,15 @@ details summary:hover{color:var(--primary)}
   <div class="page-view" id="p-settings">
     <div class="card">
       <div class="card-body">
+        <div class="settings-intro"><h3>全局设置</h3><p>管理登录凭据、告警接口和线路切换策略。</p></div>
+        <div class="settings-form">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
         <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认隐藏；点「查看」需再次验证登录密码；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap;display:inline-flex;align-items:center;gap:8px"></span></div></div>
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
         <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改"></div></div>
-        <div style="display:flex;justify-content:flex-end"><button class="btn btn-primary" onclick="saveCfg()">保存设置</button></div>
+        <div class="form-actions"><button class="btn btn-primary" onclick="saveCfg()">保存设置</button></div>
+        </div>
       </div>
     </div>
   </div>
@@ -2716,8 +2743,11 @@ details summary:hover{color:var(--primary)}
   <div class="page-view" id="p-alerttest">
     <div class="card">
       <div class="card-body">
+        <div class="settings-intro"><h3>回调测试</h3><p>输入告警标题，查看系统对这条回调的处理结果。</p></div>
+        <div class="settings-form">
         <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如 站点A-4G专线中断" onkeydown="if(event.key=='Enter')testAlert()"><button class="btn btn-secondary" onclick="testAlert()">发送测试</button></div></div>
-        <pre class="out" id="t_out" style="display:none;margin-top:14px"></pre>
+        <pre class="out callback-result" id="t_out" style="display:none;margin:14px 0 0 178px"></pre>
+        </div>
       </div>
     </div>
   </div>
@@ -3092,7 +3122,7 @@ function renderCoverage(){const o=$("cov_out");if(!o)return;
       const cmd=cov.length?stack(cov,c=>c.cmd?'<span class="tag ok">已配</span>':'<span class="tag bad">缺命令</span>'):'-';
       const act=cov.length?'':'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="点此把该线路追加到规则阶梯">追加覆盖</button>';
       return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td style="max-width:280px">${rule}</td><td style="text-align:center">${rank}</td><td>${cmd}</td><td style="text-align:right">${act}</td></tr>`}).join("");
-    const table=`<table class="data-table cov-tb"><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则</th><th style="text-align:center">阶梯位次</th><th>切换命令</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
+    const table=`<table class="data-table cov-tb"><colgroup><col style="width:14%"><col style="width:16%"><col style="width:25%"><col style="width:12%"><col style="width:15%"><col style="width:18%"></colgroup><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则</th><th style="text-align:center">阶梯位次</th><th>切换命令</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
 
     return `<div class="cov-site">
       <div class="cov-site-hd"><b>${esc(s.name)}</b>
@@ -3125,7 +3155,7 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
   $("acttb").innerHTML=a.length?a.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td class="cell1">${esc(x.site_name)||'<span style="color:var(--text-faint)">-</span>'}</td>
-    <td class="cell1"><span class="device-name" style="white-space:nowrap">${esc(x.name)}</span><span class="device-host mono" style="margin-left:8px;white-space:nowrap">${esc(x.protocol||"")}://${esc(x.host||"")}</span></td>
+    <td class="cell1"><span class="device-name" title="${esc(x.name)}">${esc(x.name)}</span><span class="device-host mono" title="${esc(x.protocol||"")}://${esc(x.host||"")}">${esc(x.protocol||"")}://${esc(x.host||"")}</span></td>
     <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
       if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
       return arr.length?`<div class="ladder-tags">`+arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join('')+`</div>`:'<span class="tag gray">未指定</span>'})()}</td>
