@@ -2563,7 +2563,7 @@ details summary:hover{color:var(--primary)}
         </div>
         <button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
       <div class="table-responsive"><table class="data-table log-tb" style="table-layout:fixed;min-width:1320px">
-      <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col><col style="width:148px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
+      <colgroup><col style="width:42px"><col style="width:182px"><col style="width:60px"><col style="width:88px"><col style="width:300px"><col style="width:170px"><col style="width:110px"><col style="width:58px"><col style="width:94px"><col></colgroup>
       <thead><tr>
         <th>ID</th><th>时间</th><th>触发</th><th>站点</th><th>告警标题</th>
         <th>动作</th><th>设备</th><th>模式</th><th>状态</th><th>错误</th></tr></thead>
