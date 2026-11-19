@@ -2839,8 +2839,10 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
     h+=`<div class="tlx-card"><div class="tlx-title">执行过程</div><div class="tlx">`+
       items.map((t,idx)=>{
         const ic=TL_IC[t.kind]||TL_IC.info;
-        const nested=(t.evh?`<details class="tlx-panel"${t.kind=="bad"?" open":""}><summary class="tlx-panel-hd"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>证据 · 线路体检<span class="q" data-tip="判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。">?</span><span class="tlx-panel-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></summary><div class="tlx-panel-bd">${t.evh}</div></details>`
-          :(t.ev?`<details class="tlx-ev"${t.kind=="bad"?" open":""}><summary>${t.step?"命令回显":"证据"}</summary><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"Evidence"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></details>`:""));
+        const panel=(title,body,open,tip)=>`<details class="tlx-panel"${open?" open":""}><summary class="tlx-panel-hd"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>${title}${tip?`<span class="q" data-tip="${tip}">?</span>`:""}<span class="tlx-panel-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></summary><div class="tlx-panel-bd">${body}</div></details>`;
+        const termPre=x=>`<pre style="margin:0;background:#0f172a;color:#e2e8f0;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;padding:12px 14px;border-radius:6px;max-height:280px;overflow:auto;white-space:pre-wrap;word-break:break-all;line-height:1.6">${esc(x)}</pre>`;
+        const nested=(t.evh?panel("证据 · 线路体检",t.evh,t.kind=="bad","判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。")
+          :(t.ev?panel(t.step?"命令回显":"证据",termPre(t.ev),t.kind=="bad"):""));
         return `<div class="tlx-item ${t.kind||""}">
           <div class="tlx-ic"><div class="tlx-dot">${ic}</div>${idx<items.length-1?'<div class="tlx-line"></div>':''}</div>
           <div class="tlx-c"><div class="tlx-hd"><h4>${esc(t.text)}</h4><span class="tlx-ts">${esc((t.ts||"").slice(11))}</span></div>
