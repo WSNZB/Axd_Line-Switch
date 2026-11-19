@@ -2600,7 +2600,8 @@ details summary:hover{color:var(--primary)}
         <div id="mt_out"><div class="empty" style="padding:28px 24px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>粘贴一条真实告警标题，校验它会命中哪条规则、降级预演会选中哪个目标线路<br><span style="font-size:12px">也可用下方「回放」以近几天真实告警批量检验规则覆盖</span></div></div>
         <div class="action-buttons" style="border-top:1px dashed var(--border);padding-top:16px">
           <div class="sel" id="rp_days"></div>
-          <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" data-tip="以真实告警校验规则覆盖情况；未命中标题用于补充关键词">?</span></button>
+          <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" data-tip="单条预检=验证一条标题命中谁、怎么降级；回放=批量拉取近N天真实告警，统计整体覆盖率与漏网标题">?</span></button>
+          <span style="font-size:12px;color:var(--text-faint)">单条检测在上方面向排查；此处批量回放面向覆盖率验证</span>
         </div>
         <div id="rp_out"></div>
       </div>
