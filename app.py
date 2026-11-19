@@ -2233,8 +2233,11 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .data-table tr.clickable{cursor:pointer}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 .flt-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0}
-.flt-group select,.flt-group input{height:34px;font-size:13px;border:1px solid var(--border2);border-radius:var(--r-ctl);background:#fff;color:var(--text-main);outline:none;transition:border-color .15s,box-shadow .15s}
-.flt-group select{padding:0 30px 0 12px;width:auto}
+.flt-group select,.flt-group input{height:34px;font-size:13px;border:1px solid var(--border2);border-radius:var(--r-ctl);background-color:#fff;color:var(--text-main);outline:none;transition:border-color .15s,box-shadow .15s}
+.flt-group select{padding:0 34px 0 12px;width:auto;cursor:pointer;appearance:none;-webkit-appearance:none;font-weight:500;color:var(--text-secondary);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  background-repeat:no-repeat;background-position:right 12px center}
+.flt-group select:hover{border-color:#9aa8ba}
 .flt-group input{padding:0 12px;width:210px}
 .flt-group select:focus,.flt-group input:focus{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
 .pager{display:flex;align-items:center;justify-content:flex-end;gap:8px;padding:12px 22px;border-top:1px solid var(--border)}
