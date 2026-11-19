@@ -1279,6 +1279,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
             try:
                 vsess = DeviceSession(dev, password)
                 vsess.connect()
+                vsess.transcript.append(("--", "### 执行验证命令"))
                 vout_all = []
                 for j, vcmd in enumerate(verify_cmds or [], 1):
                     try:
@@ -1318,7 +1319,12 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                 if vsess:
                     # 验证会话的完整收发并入主会话原文
                     sess.transcript.append(("--", "### 验证会话（重新登录设备）"))
-                    sess.transcript.extend(vsess.transcript)
+                    # 验证会话内部的登录标记改名，避免吞掉后续验证命令段
+                    for td, tx in vsess.transcript:
+                        if tx == "### 登录阶段":
+                            sess.transcript.append(("--", "### 验证会话登录"))
+                        else:
+                            sess.transcript.append((td, tx))
                     vsess.close()
         return True, verr, login_note, precheck_line, verify_ok, ""
     finally:
