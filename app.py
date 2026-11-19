@@ -2297,6 +2297,9 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .cov-tb{font-size:12.5px}
 .cov-tb th{padding:9px 14px;font-size:11.5px}
 .cov-tb td{padding:9px 14px}
+.cov-stack{display:flex;flex-direction:column;gap:4px}
+.cov-stack>span{display:block;line-height:1.5}
+.cov-cell1{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cov-ladders{margin-top:12px;padding-top:12px;border-top:1px dashed var(--border2);display:flex;flex-direction:column;gap:8px}
 .ladder{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .ladder-name{font-size:12px;color:var(--text-muted);min-width:150px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
@@ -2605,7 +2608,7 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-header"><h3>动作规则</h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:220px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
+        <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:300px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
         <th>匹配关键词 / 正则（预检用）</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
       <tbody id="acttb"></tbody></table></div>
     </div>
@@ -3017,16 +3020,19 @@ function renderCoverage(){const o=$("cov_out");if(!o)return;
     const acts=DATA.actions.filter(a=>a.site_id==s.id&&a.enabled);
     let tgMap={};acts.forEach(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
       if(!arr.length&&a.target_line)arr=[{line:a.target_line,command_block:a.command_block}];
-      arr.forEach((t,i)=>{if(!tgMap[t.line])tgMap[t.line]={name:a.name,rank:i+1,cmd:t.command_block}})});
+      arr.forEach((t,i)=>{if(!tgMap[t.line])tgMap[t.line]=[];
+        if(!tgMap[t.line].some(c=>c.name===a.name))tgMap[t.line].push({name:a.name,rank:i+1,cmd:t.command_block})})});
     const done=ls.filter(l=>tgMap[l.name]).length;
-    const rows=ls.map(l=>{const cov=tgMap[l.name];
-      const st=cov?`<span class="status-cell"><span class="dot-green"></span>已覆盖</span>`
+    const stack=(arr,fn)=>arr.length>1?`<div class="cov-stack">${arr.map(fn).join("")}</div>`:fn(arr[0]);
+    const rows=ls.map(l=>{const cov=tgMap[l.name]||[];
+      const st=cov.length?`<span class="status-cell"><span class="dot-green"></span>已覆盖</span>`
                   :`<span class="status-cell"><span class="dot-red"></span>未覆盖</span>`;
-      const rule=cov?`<span title="${esc(cov.name)}">${esc(cov.name)}</span>`:'<span style="color:var(--text-faint)">-</span>';
-      const rank=cov?cov.rank:'-';
-      const cmd=cov?(cov.cmd?'<span class="tag ok">已配</span>':'<span class="tag bad">缺本方向命令</span>'):'-';
-      const act=cov?'':'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="点此把该线路追加到规则阶梯">追加覆盖</button>';
-      return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td class="cell1" style="max-width:260px">${rule}</td><td style="text-align:center">${rank}</td><td>${cmd}</td><td style="text-align:right">${act}</td></tr>`}).join("");
+      const rule=cov.length?stack(cov,c=>`<span class="cov-cell1" title="${esc(c.name)}">${esc(c.name)}</span>`)
+                           :'<span style="color:var(--text-faint)">-</span>';
+      const rank=cov.length?stack(cov,c=>`<span>${c.rank}</span>`):'-';
+      const cmd=cov.length?stack(cov,c=>c.cmd?'<span class="tag ok">已配</span>':'<span class="tag bad">缺命令</span>'):'-';
+      const act=cov.length?'':'<button class="btn btn-sm btn-secondary" onclick="newActionFor('+s.id+','+l.id+')" title="点此把该线路追加到规则阶梯">追加覆盖</button>';
+      return `<tr><td><b>${esc(l.name)}</b></td><td>${st}</td><td style="max-width:280px">${rule}</td><td style="text-align:center">${rank}</td><td>${cmd}</td><td style="text-align:right">${act}</td></tr>`}).join("");
     const table=`<table class="data-table cov-tb"><thead><tr><th>线路</th><th>覆盖状态</th><th>所属规则</th><th style="text-align:center">阶梯位次</th><th>切换命令</th><th style="text-align:right">操作</th></tr></thead><tbody>${rows}</tbody></table>`;
     const ladders=acts.map(a=>{let arr=[];try{arr=a.targets_json?JSON.parse(a.targets_json):[]}catch(e){}
       if(!arr.length&&a.target_line)arr=[{line:a.target_line,command_block:a.command_block}];
@@ -3062,8 +3068,7 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
   $("acttb").innerHTML=a.length?a.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
     <td class="cell1">${esc(x.site_name)||'<span style="color:var(--text-faint)">-</span>'}</td>
-    <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
-      <span class="device-host">${esc(x.protocol||"")}://${esc(x.host||"")}</span></div></td>
+    <td><span class="device-name">${esc(x.name)}</span><span class="device-host" style="margin-left:8px">${esc(x.protocol||"")}://${esc(x.host||"")}</span></td>
     <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
       if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
       return arr.length?arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}" style="margin:0 6px 2px 0"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(''):'<span class="tag gray">未指定</span>'})()}</td>
