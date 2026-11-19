@@ -975,7 +975,8 @@ class DeviceSession(object):
         finally:
             # 无论成功失败都保存登录阶段原文，供排障
             self.login_raw = self.buf.decode("utf-8", "replace")
-            self.transcript.append(("RX", "[登录阶段]\n" + self.login_raw))
+            self.transcript.append(("--", "### 登录阶段"))
+            self.transcript.append(("RX", self.login_raw))
 
         if not self.logged_in:
             raise RuntimeError("登录失败（口令错误或提示符不匹配）")
@@ -1189,6 +1190,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         # 切换前：查询当前生效线路（演练也执行，用于"只看不切"）
         if (dev["status_command"] or "").strip():
             tl_append(conn, log_id, "查询当前生效线路")
+            sess.transcript.append(("--", "### 查询当前线路"))
             scmd = dev["status_command"].strip()
             out, qok, qerr = "", 1, ""
             try:
@@ -1227,6 +1229,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         else:
             tl_append(conn, log_id, "下发切换命令（%d 条）" % len(cmds), "ok")
         main_outs = []
+        sess.transcript.append(("--", "### 下发切换命令"))
         for i, cmd in enumerate(cmds, 1):
             seq_row = conn.execute("SELECT COALESCE(MAX(seq),0)+1 FROM exec_steps WHERE log_id=?",
                                    (log_id,)).fetchone()
@@ -1310,7 +1313,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
             finally:
                 if vsess:
                     # 验证会话的完整收发并入主会话原文
-                    sess.transcript.append(("--", "[验证会话开始：重新登录设备]"))
+                    sess.transcript.append(("--", "### 验证会话（重新登录设备）"))
                     sess.transcript.extend(vsess.transcript)
                     vsess.close()
         return True, verr, login_note, precheck_line, verify_ok, ""
@@ -2396,6 +2399,10 @@ pre.out .err{color:#fca5a5}
 .tlx-panel{margin-top:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 details.tlx-panel>summary.tlx-panel-hd{list-style:none;cursor:pointer}
 details.tlx-panel>summary.tlx-panel-hd::-webkit-details-marker{display:none}
+.sess-body{padding:16px;border-top:1px solid var(--border);background:#fff;display:flex;flex-direction:column;gap:14px}
+.sess-phase{border:1px solid var(--border);border-radius:8px;overflow:hidden}
+.sess-phase-hd{background:var(--bg-subtle);padding:9px 14px;font-size:12.5px;font-weight:600;color:var(--text-secondary);border-bottom:1px solid var(--border);display:flex;align-items:center}
+.sess-pre{margin:0;background:#0f172a;color:#e2e8f0;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;padding:12px 14px;max-height:300px;overflow:auto;white-space:pre-wrap;word-break:break-all;line-height:1.6}
 .tlx-panel-arrow{margin-left:auto;display:flex}
 .tlx-panel-arrow svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;color:var(--text-muted);transition:transform .2s}
 details.tlx-panel[open] .tlx-panel-arrow svg{transform:rotate(180deg)}
@@ -2833,6 +2840,23 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
     <div class="meta-item"><span class="meta-label">设备</span><span class="meta-value">${esc(l.device_name)||"-"}</span></div>
     <div class="meta-item"><span class="meta-label">耗时</span><span class="meta-value mono" style="font-size:13px;white-space:nowrap">${esc(l.started_at)} <span style="color:var(--text-muted)">→</span> ${esc((l.finished_at||"").slice(11))||"-"}</span></div>
   </div>`;
+  const SESS_IC='<svg viewBox="0 0 24 24" style="width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:2;vertical-align:-2px;margin-right:6px"><path d="M4 17l6-6-6-6"/><line x1="12" y1="19" x2="20" y2="19"/></svg>';
+  const sessTerm=(title,text)=>{
+    const lines=(text||"").split("\n"); const blocks=[]; let cur={name:"（起始）",buf:[]};
+    lines.forEach(ln=>{
+      const m=ln.match(/^###\s+(.+)$/);
+      if(m){ if(cur.buf.join("\n").trim()||cur.name!=="（起始）")blocks.push(cur); cur={name:m[1].trim(),buf:[]}; }
+      else cur.buf.push(ln);
+    });
+    blocks.push(cur);
+    const hasMark=lines.some(ln=>/^###\s+/.test(ln));
+    const real=blocks.filter(b=>b.buf.join("\n").trim()||(b.name!=="（起始）"));
+    const body=real.map(b=>{
+      const nm=b.name==="（起始）"?(hasMark?"登录握手":"完整会话"):b.name;
+      return `<div class="sess-phase"><div class="sess-phase-hd">${SESS_IC}${esc(nm)}</div><pre class="sess-pre">${esc(b.buf.join("\n").replace(/^\n+/,"").replace(/\n+$/,""))}</pre></div>`;
+    }).join("");
+    return `<div class="accordion"><div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">${title}<span style="font-size:12px;color:var(--text-faint);font-weight:400;margin-left:8px">${real.length} 个阶段</span>${ARROW}</div><div class="accordion-content"><div class="sess-body">${body}</div></div></div>`;
+  };
   let tl=[];try{tl=JSON.parse(l.timeline||"[]")}catch(e){}
   if(tl.length){
     const items=tl.filter(t=>!(t.kind=="info"&&!t.evh&&!t.ev&&/^(收到告警|命中站点)/.test(t.text)));
@@ -2847,7 +2871,7 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
           <div class="tlx-ic"><div class="tlx-dot">${ic}</div>${idx<items.length-1?'<div class="tlx-line"></div>':''}</div>
           <div class="tlx-c"><div class="tlx-hd"><h4>${esc(t.text)}</h4><span class="tlx-ts">${esc((t.ts||"").slice(11))}</span></div>
           ${nested?'<div class="tlx-bd">'+nested+'</div>':''}</div></div>`}).join("")+`</div></div>`;}
-  if(l.session_log)h+=term("会话原文",l.session_log,false);
+  if(l.session_log)h+=sessTerm("会话原文",l.session_log);
   if((l.steps||[]).length&&!tl.some(t=>t.step))h+=`<div class="timeline-title">命令执行<span class="q" data-tip="旧版记录的回退展示">?</span></div>`+
     l.steps.map(s=>`<div class="accordion${s.ok?"":" open"}">
     <div class="accordion-header" onclick="this.parentElement.classList.toggle('open')">
