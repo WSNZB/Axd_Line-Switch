@@ -61,8 +61,8 @@ Body:    {"title": "告警标题"}       # 兼容 alarm_title / name 字段；�
 仅识别线路、没有命中规则时，前者为 `true`，后者为 `false`，不会切线。
 `dry_run: true` 是演练，即使任务状态为 `success` 也没有下发切换命令。
 
-每次带有效标题的 `/api/alert` 回调（包括未命中）都会写入「监控中心 → 告警接收记录」；
-设备切换任务仍单独保存在「执行记录」。`/api/match/test` 是只读预检，不产生接收记录。
+每次带有效标题的 `/api/alert` 回调（包括未命中）都会写入「监控中心 → 告警记录」；
+设备切换任务仍单独保存在「执行记录」。`/api/match/test` 是只读预检，不产生告警记录。
 
 ---
 
@@ -266,7 +266,7 @@ Vodacom 下一跳IP `192.168.130.2` / Airtel `192.168.130.10` / 4G `192.168.130.
 |------|------|------|
 | POST | `/api/alert` | 告警入口（X-API-Token 鉴权） |
 | GET | `/api/task/{id}` | 查任务状态（供回调方轮询） |
-| GET | `/api/alert-receipts` | 告警接收记录，支持 `page`、`limit`、`q`、`rule_matched` 筛选 |
+| GET | `/api/alert-receipts` | 告警记录，支持 `page`、`limit`、`q`、`rule_matched` 筛选 |
 | POST/PUT/DELETE | `/api/actions[/{id}]` | 切换动作 CRUD |
 | POST/PUT/DELETE | `/api/devices[/{id}]` | 设备 CRUD（密码留空=不修改） |
 | POST/PUT/DELETE | `/api/sites[/{id}]` | 站点 CRUD |

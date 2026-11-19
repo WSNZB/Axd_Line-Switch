@@ -2839,7 +2839,7 @@ details summary:hover{color:var(--primary)}
     </div>
   </div>
 
-  <!-- 告警接收记录：所有有效回调，包括完全未命中 -->
+  <!-- 告警记录：所有有效回调，包括完全未命中 -->
   <div class="page-view" id="p-alerts">
     <div class="card">
       <div class="card-header">
@@ -3094,9 +3094,9 @@ details summary:hover{color:var(--primary)}
   <div class="mfoot"><button class="btn btn-secondary" onclick="closeM('mLog')">关闭</button></div>
 </div></div>
 
-<!-- 告警接收详情 -->
+<!-- 告警详情 -->
 <div class="modal" id="mReceipt"><div class="box" style="width:820px;max-width:96vw">
-  <div class="mhd"><h3 id="mReceiptTitle">告警接收详情</h3><button class="mx" onclick="closeM('mReceipt')">✕</button></div>
+  <div class="mhd"><h3 id="mReceiptTitle">告警详情</h3><button class="mx" onclick="closeM('mReceipt')">✕</button></div>
   <div class="mbd" id="mReceiptBody"></div>
   <div class="mfoot"><button class="btn btn-secondary" onclick="closeM('mReceipt')">关闭</button></div>
 </div></div>
@@ -3126,7 +3126,7 @@ function logout(){api("POST","/api/logout").then(()=>location.reload())}
 
 // ---- 导航：顶部一级 + 左侧二级 ----
 const PAGE_INFO={dash:["执行记录","告警触发的切换任务历史、状态与结果证据"],
-  alerts:["告警接收记录","查看每次有效告警回调，包括未命中与未切换"],
+  alerts:["告警记录","查看每次有效告警回调，包括未命中与未切换"],
   match:["匹配预检","以告警标题校验规则命中与降级链路，不产生任何执行"],
   actions:["切换动作","维护目标线路优先级与各方向切换命令"],
   devices:["设备管理","站点设备的连接凭据、线路识别命令与连通性"],
@@ -3134,7 +3134,7 @@ const PAGE_INFO={dash:["执行记录","告警触发的切换任务历史、状�
   settings:["全局设置","访问凭据、AIOps 接口与判定参数"],
   alerttest:["回调测试","模拟 AIOps 告警回调，验证端到端触发链路"]};
 const NAV_GROUPS={
-  monitor:{title:"监控中心",items:[["dash","执行记录",'<path d="M3 12h4l3-8 5 16 3-8h4"/>'],["alerts","告警接收记录",'<path d="M4 4h16v16H4z"/><path d="M7 9h10M7 13h10M7 17h6"/>']]},
+  monitor:{title:"监控中心",items:[["dash","执行记录",'<path d="M3 12h4l3-8 5 16 3-8h4"/>'],["alerts","告警记录",'<path d="M4 4h16v16H4z"/><path d="M7 9h10M7 13h10M7 17h6"/>']]},
   config:{title:"切换配置",items:[["actions","切换动作",'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>'],["match","匹配预检",'<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>']]},
   resource:{title:"资源管理",items:[["sites","站点管理",'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>'],["devices","设备管理",'<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/>']]},
   system:{title:"系统设置",items:[["settings","全局设置",'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'],["alerttest","回调测试",'<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>']]}};
@@ -3166,7 +3166,7 @@ function refresh(p){
   if(p=="settings")loadCfg()}
 // match / alerttest 为纯交互页，无需预加载
 
-// ---- 告警接收记录 ----
+// ---- 告警记录 ----
 let AR_PAGE=1,AR_ROWS=[];
 const AR_STATUS={success:["切线成功","ok"],running:["执行中","info"],
   skipped:["未切换","gray"],verify_failed:["验证未过","warn"],failed:["执行失败","bad"]};
@@ -3191,17 +3191,17 @@ function loadAlertReceipts(){
         <td><span class="tag ${r.rule_matched?'ok':'gray'}">${r.rule_matched?'已命中':'未命中'}</span></td>
         <td><span class="tag ${res[1]}">${res[0]}</span></td>
         <td class="cell1" title="${esc(reason)}">${r.task_id?'任务 #'+r.task_id+' · ':''}${esc(reason||'-')}</td>
-      </tr>`}).join(""):'<tr><td colspan="5"><div class="empty">暂无告警接收记录</div></td></tr>';
+      </tr>`}).join(""):'<tr><td colspan="5"><div class="empty">暂无告警记录</div></td></tr>';
     const pages=Math.max(1,Math.ceil((d.total||0)/20));
     $("arpg").innerHTML=`<div class="pager"><span class="pg-info">共 ${d.total||0} 条 · 第 ${AR_PAGE}/${pages} 页</span>
       <button class="pg-btn" onclick="AR_PAGE--;loadAlertReceipts()" ${AR_PAGE<=1?'disabled':''}>上一页</button>
       <button class="pg-btn" onclick="AR_PAGE++;loadAlertReceipts()" ${AR_PAGE>=pages?'disabled':''}>下一页</button></div>`;
-  }).catch(e=>showToast("加载告警接收记录失败: "+e.message,1))}
+  }).catch(e=>showToast("加载告警记录失败: "+e.message,1))}
 function showReceipt(id){
   const r=AR_ROWS.find(x=>x.id===id);if(!r)return;
   let saved={};try{saved=JSON.parse(r.response_json||"{}")}catch(e){}
   const res=receiptResult(r);
-  $("mReceiptTitle").textContent="告警接收详情 #"+id;
+  $("mReceiptTitle").textContent="告警详情 #"+id;
   $("mReceiptBody").innerHTML=`<div class="meta-grid">
     <div class="meta-item"><span class="meta-label">接收时间</span><span class="meta-value">${esc(r.received_at)}</span></div>
     <div class="meta-item"><span class="meta-label">切换规则</span><span class="meta-value">${r.rule_matched?'已命中':'未命中'}</span></div>
