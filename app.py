@@ -47,6 +47,7 @@ LS_DB = (os.environ.get("LS_DB") or os.path.join(BASE_DIR, "line_switch.db")).st
 LS_SECRET = (os.environ.get("LS_SECRET") or "axd-line-switch-default-secret").strip()
 
 DEFAULT_PROMPT = r'[<\[][\w\-.:/@]+[>\]]\s*$'   # 华为/H3C 默认提示符
+DEFAULT_STATUS_COMMAND = "display ip routing-table 0.0.0.0"
 MATCH_POLICY_FIRST = "first"                     # 多命中策略：只执行第一个
 
 # AIOps 告警接口（用于"匹配预检/回放"，可选功能）
@@ -154,7 +155,7 @@ def init_db():
         init_command TEXT DEFAULT 'screen-length 0 temporary',
         prompt TEXT DEFAULT '',
         timeout INTEGER DEFAULT 10,
-        status_command TEXT DEFAULT 'display ip routing-table',
+        status_command TEXT DEFAULT 'display ip routing-table 0.0.0.0',
         current_regex TEXT DEFAULT '',
         line_map TEXT DEFAULT '',
         enabled INTEGER DEFAULT 1,
@@ -226,7 +227,7 @@ def init_db():
     """)
     # 兼容旧库：补列
     for tbl, col, ddl in [
-        ("devices", "status_command", "TEXT DEFAULT 'display ip routing-table'"),
+        ("devices", "status_command", "TEXT DEFAULT 'display ip routing-table 0.0.0.0'"),
         ("devices", "current_regex", "TEXT DEFAULT ''"),
         ("devices", "line_map", "TEXT DEFAULT ''"),
         ("actions", "verify_block", "TEXT DEFAULT ''"),
@@ -847,20 +848,33 @@ class DeviceSession(object):
                 tail = self.buf.decode("utf-8", "replace")[-300:].strip() or "(设备无任何输出)"
                 raise RuntimeError("SSH 进程已退出(退出码=%s)。设备输出尾部: %s" % (code, tail))
 
-    def _read_until(self, patterns, timeout):
+    def _read_until(self, patterns, timeout, auto_page=False):
         """读到任一 pattern 匹配缓冲尾部即返回缓冲文本；超时返回 None。patterns: [compiled]"""
         deadline = time.time() + timeout
+        last_page_end = -1
+        page_re = re.compile(rb"-{2,}\s*More\s*-{2,}", re.IGNORECASE)
         while time.time() < deadline:
             text = self.buf.decode("utf-8", "replace")
             for p in patterns:
                 m = p.search(text)
                 if m:
                     return text
+            if auto_page:
+                for match in page_re.finditer(self.buf):
+                    if match.end() > last_page_end:
+                        # 分页提示只需一个空格；发送回车会改变设备的翻页行为。
+                        if self.kind == "telnet":
+                            self.sock.sendall(b" ")
+                        else:
+                            os.write(self.master_fd, b" ")
+                        self.transcript.append(("TX", "[space: next page]"))
+                        last_page_end = match.end()
             chunk = self._read_some(0.2)
             if chunk:
                 self.buf += _strip_iac(chunk) if self.kind == "telnet" else chunk
             # 丢掉过大的历史缓冲，只留尾部（避免长回显拖慢匹配）
             if len(self.buf) > 65536:
+                last_page_end -= len(self.buf) - 16384
                 self.buf = self.buf[-16384:]
         return None
 
@@ -1020,7 +1034,7 @@ class DeviceSession(object):
             self.last_raw = "(该命令不等待回显，会话已断开)"
             return "(session closed)"
         time.sleep(0.15)
-        text = self._read_until([self.prompt_re], self.timeout)
+        text = self._read_until([self.prompt_re], self.timeout, auto_page=True)
         if text is None:
             raw = self.buf.decode("utf-8", "replace")
             self.last_raw = raw
@@ -1093,6 +1107,14 @@ def parse_line_map(text):
         k, v = s.split(sep, 1)
         m[k.strip()] = v.strip()
     return m
+
+
+def status_query_command(dev):
+    """旧设备的整表查询默认值改为只查默认路由；用户自定义命令保持原样。"""
+    cmd = (dev["status_command"] or "").strip()
+    if not cmd or (cmd.lower() == "display ip routing-table" and not (dev["current_regex"] or "").strip()):
+        return DEFAULT_STATUS_COMMAND
+    return cmd
 
 
 def parse_current_line(output, line_map_text, custom_regex="", with_ip=False, extra_map=None):
@@ -1191,10 +1213,10 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
         precheck_line = ""
         precheck_disp = ""
         # 切换前：查询当前生效线路（演练也执行，用于"只看不切"）
-        if (dev["status_command"] or "").strip():
+        if status_query_command(dev):
             tl_append(conn, log_id, "查询当前生效线路")
             sess.transcript.append(("--", "### 查询当前线路"))
-            scmd = dev["status_command"].strip()
+            scmd = status_query_command(dev)
             out, qok, qerr = "", 1, ""
             try:
                 out = sess.send_cmd(scmd)
@@ -1554,6 +1576,64 @@ def check_session(cookie_val):
     return hmac.compare_digest(_sign_session(ts), sig)
 
 
+def _copy_name(conn, table, name):
+    """为站点/设备副本生成不重复的名称。table 仅由内部固定值传入。"""
+    base = name + "-副本"
+    candidate = base
+    index = 2
+    while conn.execute("SELECT 1 FROM %s WHERE name=?" % table, (candidate,)).fetchone():
+        candidate = "%s%d" % (base, index)
+        index += 1
+    return candidate
+
+
+def copy_site(conn, site_id):
+    """复制站点和线路；副本线路先停用，避免告警同时命中两个站点。"""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        source = conn.execute("SELECT * FROM sites WHERE id=?", (site_id,)).fetchone()
+        if not source:
+            conn.rollback()
+            return None
+        name = _copy_name(conn, "sites", source["name"])
+        cur = conn.execute("INSERT INTO sites(name,remark,created_at) VALUES(?,?,?)",
+                           (name, source["remark"], now()))
+        new_id = cur.lastrowid
+        lines = conn.execute(
+            "INSERT INTO lines(site_id,name,alarm_keywords,nexthop_ip,priority,enabled,remark,created_at) "
+            "SELECT ?,name,alarm_keywords,nexthop_ip,priority,0,remark,? FROM lines WHERE site_id=?",
+            (new_id, now(), site_id))
+        conn.commit()
+        return {"id": new_id, "name": name, "line_count": lines.rowcount}
+    except Exception:
+        conn.rollback()
+        raise
+
+
+def copy_device(conn, device_id):
+    """复制设备配置与已加密凭据，不在 API 中回传密码。"""
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        source = conn.execute("SELECT * FROM devices WHERE id=?", (device_id,)).fetchone()
+        if not source:
+            conn.rollback()
+            return None
+        name = _copy_name(conn, "devices", source["name"])
+        cur = conn.execute(
+            "INSERT INTO devices(site_id,name,host,port,protocol,username,password_enc,"
+            "enable_password_enc,init_command,prompt,timeout,status_command,current_regex,"
+            "line_map,enabled,remark,created_at) "
+            "SELECT site_id,?,host,port,protocol,username,password_enc,enable_password_enc,"
+            "init_command,prompt,timeout,?,current_regex,line_map,enabled,remark,? "
+            "FROM devices WHERE id=?",
+            (name, status_query_command(source), now(), device_id))
+        conn.commit()
+        return {"id": cur.lastrowid, "name": name}
+    except Exception:
+        conn.rollback()
+        raise
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "AxdLineSwitch/1.0"
 
@@ -1735,6 +1815,14 @@ class Handler(BaseHTTPRequestHandler):
             return self._send_json({"error": "unauthorized"}, 401)
         conn = get_db()
         try:
+            m = re.match(r"^/api/sites/(\d+)/copy$", path)
+            if m:
+                copied = copy_site(conn, int(m.group(1)))
+                return self._send_json(copied if copied else {"error": "站点不存在"}, 200 if copied else 404)
+            m = re.match(r"^/api/devices/(\d+)/copy$", path)
+            if m:
+                copied = copy_device(conn, int(m.group(1)))
+                return self._send_json(copied if copied else {"error": "设备不存在"}, 200 if copied else 404)
             if path == "/api/alert":
                 title = (body.get("title") or body.get("alarm_title") or body.get("name")
                          or (parse_qs(parsed.query).get("title") or [""])[0]).strip()
@@ -2037,7 +2125,7 @@ class Handler(BaseHTTPRequestHandler):
                 sess = s
                 s.connect()
                 if want_status:
-                    scmd = (dev["status_command"] or "").strip() or "display ip routing-table"
+                    scmd = status_query_command(dev)
                     out = s.send_cmd(scmd)
                     emap = site_line_ip_map(conn, dev["site_id"])
                     line = parse_current_line(out, "", dev["current_regex"], extra_map=emap)
@@ -2262,6 +2350,9 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .btn-danger:hover{background:var(--danger-bg);border-color:var(--danger)}
 .btn-sm{padding:5px 11px;font-size:12px;border-radius:7px}
 .btn:active{transform:translateY(.5px)}
+.btn:disabled{cursor:wait;opacity:.75;transform:none}
+.btn-spinner{width:13px;height:13px;border:2px solid currentColor;border-right-color:transparent;border-radius:50%;animation:btn-spin .7s linear infinite}
+@keyframes btn-spin{to{transform:rotate(360deg)}}
 
 /* ============ 表格 ============ */
 .table-responsive{width:100%;overflow-x:auto}
@@ -2714,7 +2805,7 @@ details summary:hover{color:var(--primary)}
       <div class="table-responsive"><table class="data-table"><thead><tr>
         <th style="width:90px">状态</th><th style="width:220px">设备名 / 地址</th><th style="width:110px">站点</th>
         <th style="width:80px">协议</th><th style="width:100px">账号</th><th style="width:70px">超时</th>
-        <th style="width:240px;text-align:right">操作</th></tr></thead>
+        <th style="width:310px;text-align:right">操作</th></tr></thead>
       <tbody id="devtb"></tbody></table></div>
     </div>
   </div>
@@ -2726,7 +2817,7 @@ details summary:hover{color:var(--primary)}
         <div class="flt-group"><input id="sf_kw" placeholder="搜索站点名/线路" oninput="SITE_KW=this.value.trim();loadSites()"></div>
         <button class="btn btn-primary" onclick="editSite(0)">＋ 新建站点</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:220px">站点名称</th><th>线路</th><th style="width:220px">备注</th><th style="width:220px;text-align:right">操作</th></tr></thead>
+        <th style="width:220px">站点名称</th><th>线路</th><th style="width:220px">备注</th><th style="width:280px;text-align:right">操作</th></tr></thead>
       <tbody id="sitetb"></tbody></table></div>
     </div>
   </div>
@@ -2834,7 +2925,7 @@ details summary:hover{color:var(--primary)}
     <div><label>超时(秒)</label><input id="d_to" type="number" value="10"></div>
   </div>
   <div class="grid2">
-    <div><label>状态查询命令(查当前生效线路)</label><input id="d_scmd" value="display ip routing-table" placeholder="留空则用 display ip routing-table"></div>
+    <div><label>状态查询命令(查当前生效线路)</label><input id="d_scmd" value="display ip routing-table 0.0.0.0" placeholder="留空则查询 0.0.0.0/0 默认路由"></div>
     <div><label>当前线路正则(空=默认解析 0.0.0.0/0 下一跳)</label><input id="d_cregex" placeholder="如: 0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)"></div>
   </div>
   <label class="sw"><input type="checkbox" id="d_en" checked><span>启用该设备</span></label>
@@ -2843,8 +2934,8 @@ details summary:hover{color:var(--primary)}
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mDev')">取消</button>
     <span class="sp"></span>
-    <button class="btn btn-secondary" onclick="testDevice()">测试连接</button>
-    <button class="btn btn-secondary" onclick="queryDeviceLine()">查当前线路</button>
+    <button class="btn btn-secondary" onclick="testDevice(this)">测试连接</button>
+    <button class="btn btn-secondary" onclick="queryDeviceLine(this)">查当前线路</button>
     <button class="btn btn-primary" onclick="saveDevice()">保存</button>
   </div>
 </div></div>
@@ -2925,7 +3016,7 @@ const PAGE_INFO={dash:["执行记录","告警触发的切换任务历史、状�
 const NAV_GROUPS={
   monitor:{title:"监控中心",items:[["dash","执行记录",'<path d="M3 12h4l3-8 5 16 3-8h4"/>']]},
   config:{title:"切换配置",items:[["actions","切换动作",'<path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/>'],["match","匹配预检",'<circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/>']]},
-  resource:{title:"资源管理",items:[["devices","设备管理",'<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/>'],["sites","站点管理",'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>']]},
+  resource:{title:"资源管理",items:[["sites","站点管理",'<path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/>'],["devices","设备管理",'<rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/><path d="M6 7h.01M6 17h.01"/>']]},
   system:{title:"系统设置",items:[["settings","全局设置",'<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>'],["alerttest","回调测试",'<path d="M22 2L11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/>']]}};
 let CUR_PAGE="dash";
 function buildSideNav(g){
@@ -3317,9 +3408,10 @@ function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
     <td>${esc(x.site_name||"-")}</td><td><span class="tag gray">${x.protocol}</span></td>
     <td>${esc(x.username)}</td><td>${x.timeout}s</td>
     <td><div class="ops-cell">
-      <button class="btn btn-sm btn-secondary" onclick="testDeviceById(${x.id})">测试</button>
-      <button class="btn btn-sm btn-secondary" onclick="testDeviceByIdStatus(${x.id})">查线路</button>
+      <button class="btn btn-sm btn-secondary" onclick="testDeviceById(${x.id},this)">测试</button>
+      <button class="btn btn-sm btn-secondary" onclick="testDeviceByIdStatus(${x.id},this)">查线路</button>
       <button class="btn btn-sm btn-secondary" onclick="editDevice(${x.id})">编辑</button>
+      <button class="btn btn-sm btn-secondary" onclick="copyDevice(${x.id},this)">复制</button>
       <button class="btn btn-sm btn-danger" onclick="delDevice(${x.id})">删除</button></div></td></tr>`).join(""):
     '<tr><td colspan=7><div class="empty"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/></svg>暂无设备</div></td></tr>'})}
 function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
@@ -3328,7 +3420,8 @@ function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
   $("d_user").value=d.username||"";$("d_pwd").value="";$("d_epwd").value="";
   $("d_init").value=d.init_command!=null?d.init_command:"screen-length 0 temporary";
   $("d_prompt").value=d.prompt||"";$("d_to").value=d.timeout||10;
-  $("d_scmd").value=d.status_command!=null?d.status_command:"display ip routing-table";
+  const scmd=(d.status_command||"").trim();
+  $("d_scmd").value=(!scmd||(scmd.toLowerCase()==="display ip routing-table"&&!(d.current_regex||"").trim()))?"display ip routing-table 0.0.0.0":scmd;
   $("d_cregex").value=d.current_regex||"";
   $("d_test").style.display="none";
   $("mDevTitle").textContent=d.id?"编辑设备 #"+d.id:"新建设备";
@@ -3349,24 +3442,45 @@ function saveDevice(){const b=devBody();
   api(b.id?"PUT":"POST",b.id?"/api/devices/"+b.id:"/api/devices",b).then(()=>{
     closeM("mDev");showToast("设备已保存");loadDevices()})}
 function delDevice(id){if(confirm("确认删除设备 #"+id+"？"))api("DELETE","/api/devices/"+id).then(()=>{showToast("已删除");loadDevices()})}
+function copyDevice(id,btn){withDeviceBusy(btn,"复制中…",async()=>{
+  const r=await api("POST","/api/devices/"+id+"/copy",{});
+  if(!r.id)throw new Error(r.error||"设备复制失败");
+  showToast("已复制设备："+r.name);loadDevices()
+},e=>showToast("设备复制失败: "+e.message,1))}
 function _showTest(r,el){const o=$(el);o.style.display="block";
   o.textContent=r.ok?("连接成功\n"+(r.note||[]).join("\n")+(r.banner?"\n"+r.banner:""))
     :("失败 ✗\n"+(r.error||"")+(r.session_tail?"\n\n--- ssh 会话尾部 ---\n"+r.session_tail:""))}
-function testDevice(){const b=devBody();
-  if(b.id){api("POST","/api/devices/"+b.id+"/test",{}).then(r=>_showTest(r,"d_test"))}
-  else{api("POST","/api/devices",b).then(r=>{b.id=r.id;$("d_id").value=r.id;
-    api("POST","/api/devices/"+r.id+"/test",{}).then(t=>_showTest(t,"d_test"))})}}
-function testDeviceById(id){api("POST","/api/devices/"+id+"/test",{}).then(r=>{
-  if(r.ok)showToast("连接成功");else showToast("连接失败: "+(r.error||""),1)})}
-function queryDeviceLine(){const id=$("d_id").value;if(!id)return showToast("请先保存设备",1);
-  api("POST","/api/devices/"+id+"/status",{}).then(r=>{
+function withDeviceBusy(btn,label,work,onError){
+  if(!btn||btn.disabled)return;
+  const old=btn.innerHTML;
+  btn.disabled=true;btn.setAttribute("aria-busy","true");
+  btn.innerHTML='<span class="btn-spinner" aria-hidden="true"></span>'+label;
+  Promise.resolve().then(work).catch(e=>onError(e)).finally(()=>{
+    btn.innerHTML=old;btn.disabled=false;btn.removeAttribute("aria-busy")})}
+function deviceModalError(e){const o=$("d_test");o.style.display="block";o.textContent="请求失败: "+e.message}
+function testDevice(btn){withDeviceBusy(btn,"连接中…",async()=>{
+  const b=devBody();let id=b.id;
+  if(!id){const saved=await api("POST","/api/devices",b);
+    if(!saved.id)throw new Error(saved.error||"保存设备失败");
+    id=saved.id;$("d_id").value=id}
+  _showTest(await api("POST","/api/devices/"+id+"/test",{}),"d_test")},deviceModalError)}
+function testDeviceById(id,btn){withDeviceBusy(btn,"测试中…",async()=>{
+  const r=await api("POST","/api/devices/"+id+"/test",{});
+  if(r.ok)showToast("连接成功");else showToast("连接失败: "+(r.error||""),1)
+},e=>showToast("连接失败: "+e.message,1))}
+function queryDeviceLine(btn){const id=$("d_id").value;if(!id)return showToast("请先保存设备",1);
+  withDeviceBusy(btn,"查询中…",async()=>{
+    const r=await api("POST","/api/devices/"+id+"/status",{});
     const o=$("d_test");o.style.display="block";
     if(r.ok){o.textContent="当前生效线路: "+(r.current_line||"未识别")+"\n查询命令: "+r.command+((r.note&&r.note.length>1)?"\n\n"+r.note.slice(1).join("\n"):"")+"\n\n回显:\n"+(r.banner||"")}
-    else{o.textContent="查询失败: "+(r.error||"")}})}
-function testDeviceByIdStatus(id){api("POST","/api/devices/"+id+"/status",{}).then(r=>{
+    else{o.textContent="查询失败: "+(r.error||"")}
+  },deviceModalError)}
+function testDeviceByIdStatus(id,btn){withDeviceBusy(btn,"查询中…",async()=>{
+  const r=await api("POST","/api/devices/"+id+"/status",{});
   if(r.ok){let t="当前生效线路: "+(r.current_line||"未识别");
     const hint=(r.note||[]).filter(x=>x.indexOf("提示:")===0);if(hint.length)t+="\n"+hint.join("\n");
-    showToast(t)}else showToast("查询失败: "+(r.error||""),1)})}
+    showToast(t)}else showToast("查询失败: "+(r.error||""),1)
+},e=>showToast("查询失败: "+e.message,1))}
 
 // ---- 站点 ----
 let SITE_KW="";
@@ -3378,10 +3492,11 @@ function loadSites(){Promise.all([api("GET","/api/sites"),api("GET","/api/lines"
     const ls=lines.filter(l=>l.site_id==x.id);
     return `<tr>
     <td><span class="device-name">${esc(x.name)}</span><span class="device-host mono" style="margin-left:8px">#${x.id}</span></td>
-    <td>${ls.length?ls.map(l=>`<span class="tag ok" style="margin-right:6px">${esc(l.name)}</span>`).join(""):'<span style="color:var(--text-faint)">未配置</span>'}</td>
+    <td>${ls.length?ls.map(l=>`<span class="tag ${l.enabled?"ok":"gray"}" style="margin-right:6px">${esc(l.name)}${l.enabled?"":"（停用）"}</span>`).join(""):'<span style="color:var(--text-faint)">未配置</span>'}</td>
     <td style="color:var(--text-muted);max-width:200px" class="cell1"><span title="${esc(x.remark)}">${esc(x.remark)||"-"}</span></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="editSite(${x.id})">编辑</button>
     <button class="btn btn-sm btn-secondary" onclick="manageLines(${x.id})">线路</button>
+    <button class="btn btn-sm btn-secondary" onclick="copySite(${x.id},this)">复制</button>
     <button class="btn btn-sm btn-danger" onclick="delSite(${x.id})">删除</button></div></td></tr>`}).join(""):
     '<tr><td colspan=4><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>暂无站点</div></td></tr>'})}
 function editSite(id){const s=DATA.sites.find(x=>x.id==id)||{};
@@ -3391,6 +3506,11 @@ function saveSite(){const b={id:$("si_id").value||null,name:$("si_name").value.t
   if(!b.name){showToast("站点名必填",1);return}
   api(b.id?"PUT":"POST",b.id?"/api/sites/"+b.id:"/api/sites",b).then(()=>{closeM("mSite");showToast("站点已保存");loadSites()})}
 function delSite(id){if(confirm("确认删除站点 #"+id+"？"))api("DELETE","/api/sites/"+id).then(()=>{showToast("已删除");loadSites()})}
+function copySite(id,btn){withDeviceBusy(btn,"复制中…",async()=>{
+  const r=await api("POST","/api/sites/"+id+"/copy",{});
+  if(!r.id)throw new Error(r.error||"站点复制失败");
+  showToast("已复制站点："+r.name+(r.line_count?"；复制的线路默认停用":""));loadSites()
+},e=>showToast("站点复制失败: "+e.message,1))}
 
 // ---- 站点线路（互斥判定依据） ----
 function manageLines(siteId){const s=(DATA.sites||[]).find(x=>x.id==siteId)||{};
@@ -3406,7 +3526,7 @@ function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
       <td style="width:130px"><input id="ln_${l.id}" value="${esc(l.name)}" style="padding:6px 10px;font-size:12.5px"></td>
       <td><input id="lk_${l.id}" value="${esc(l.alarm_keywords)}" placeholder="如 41.243.21.170,Airtel" style="padding:6px 10px;font-size:12.5px"></td>
       <td style="width:170px"><input id="li_${l.id}" value="${esc(l.nexthop_ip)}" class="mono" placeholder="下一跳IP" style="padding:6px 10px;font-size:12.5px"></td>
-      <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
+      <td><select id="le_${l.id}" style="padding:5px 6px;font-size:12px"><option value="1"${l.enabled?" selected":""}>启用</option><option value="0"${l.enabled?"":" selected"}>停用</option></select></td>
       <td><div class="ops-cell"><button class="btn btn-sm btn-primary" onclick="saveLine(${l.id})">保存</button>
       <button class="btn btn-sm btn-secondary" onclick="LINE_EDIT=null;loadLines(+$('l_site').value)">取消</button></div></td></tr>`;
     return `<tr>
@@ -3417,7 +3537,7 @@ function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
     <button class="btn btn-sm btn-danger" onclick="delLine(${l.id})">删除</button></div></td></tr>`}).join(""):
     '<tr><td colspan=5><div class="empty">暂无线路</div></td></tr>'})}
 function saveLine(id){api("PUT","/api/lines/"+id,{
-  name:$("ln_"+id).value.trim(),alarm_keywords:$("lk_"+id).value.trim(),nexthop_ip:$("li_"+id).value.trim()
+  name:$("ln_"+id).value.trim(),alarm_keywords:$("lk_"+id).value.trim(),nexthop_ip:$("li_"+id).value.trim(),enabled:+$("le_"+id).value
   }).then(()=>{showToast("线路已保存");LINE_EDIT=null;loadLines(+$("l_site").value);loadSites();loadActions&&loadActions()})}
 function addLine(){const b={site_id:+$("l_site").value,name:$("l_name").value.trim(),
   alarm_keywords:$("l_kw").value.trim(),nexthop_ip:$("l_ip").value.trim()};

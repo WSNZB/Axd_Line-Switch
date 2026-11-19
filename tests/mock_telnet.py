@@ -8,9 +8,11 @@ display current-configuration 显示当前挂 route-policy import 的 peer。
 import socket
 import socketserver
 import sys
+import time
 
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 12345
 PWD_PROMPT = sys.argv[2] if len(sys.argv) > 2 else "Password:"
+RESPONSE_DELAY = float(sys.argv[3]) if len(sys.argv) > 3 else 0
 USER = "admin"
 PASS = "Mock@123"
 PROMPT = "<MockSW>"
@@ -56,6 +58,8 @@ class Handler(socketserver.BaseRequestHandler):
                 send("Bye\r\n")
                 return
             if "display ip routing-table" in line:
+                if RESPONSE_DELAY:
+                    time.sleep(RESPONSE_DELAY)
                 out = ("Route Flags: R - relay, D - download to fib\r\n"
                        "------------------------------------------------------------------------------\r\n"
                        "Routing Tables: Public\r\n"
@@ -64,7 +68,15 @@ class Handler(socketserver.BaseRequestHandler):
                        "   0.0.0.0/0        BGP     255  3      D    %s          GigabitEthernet0/1\r\n"
                        "  127.0.0.0/8       Direct  0    0      D    127.0.0.1       InLoop0\r\n"
                        "192.168.130.0/24    Direct  0    0      D    192.168.130.5   GigabitEthernet0/1\r\n") % current_nh
-                send(PROMPT + line + "\r\n" + out + PROMPT + "\r\n")
+                if line == "display ip routing-table":
+                    # 整表查询模拟设备分页，客户端必须发送单个空格继续。
+                    first, rest = out.split("  127.0.0.0/8", 1)
+                    send(PROMPT + line + "\r\n" + first + "---- More ----")
+                    if s.recv(1) != b" ":
+                        return
+                    send("\r\n  127.0.0.0/8" + rest + PROMPT + "\r\n")
+                else:
+                    send(PROMPT + line + "\r\n" + out + PROMPT + "\r\n")
             elif "display current-configuration" in line:
                 peers = "".join(
                     "  peer %s route-policy %s import\r\n" % (p, POLICY[p])

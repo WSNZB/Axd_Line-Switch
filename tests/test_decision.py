@@ -175,6 +175,10 @@ Destination/Mask    Proto   Pre  Cost   Flags NextHop         Interface
     assert app.parse_current_line(out, lm, r"0\.0\.0\.0.*?(\d+\.\d+\.\d+\.\d+)") == "Airtel"
     assert app.parse_current_line(out, lm, with_ip=True) == "Airtel (192.168.130.10)"
     assert app.parse_current_line(out, "", with_ip=True) == "192.168.130.10"
+    assert app.status_query_command({"status_command": "display ip routing-table", "current_regex": ""}) == app.DEFAULT_STATUS_COMMAND
+    assert app.status_query_command({"status_command": "", "current_regex": ""}) == app.DEFAULT_STATUS_COMMAND
+    assert app.status_query_command({"status_command": "show route custom", "current_regex": ""}) == "show route custom"
+    assert app.status_query_command({"status_command": "display ip routing-table", "current_regex": "custom"}) == "display ip routing-table"
     print("PASS 场景9 路由表解析当前线路（默认/自定义正则/展示带IP）")
 
 
@@ -199,6 +203,14 @@ def test_target_line_skip():
         (app.encrypt_pw("Mock@123"),))
     conn.commit()
     dev = conn.execute("SELECT * FROM devices WHERE id=1").fetchone()
+    sess = app.DeviceSession(dev, "Mock@123")
+    try:
+        sess.connect()
+        paged = sess.send_cmd("display ip routing-table")
+        assert app.parse_current_line(paged, "192.168.130.10=Airtel") == "Airtel", paged
+    finally:
+        sess.close()
+    print("PASS 设备整表分页提示自动翻页并解析默认路由")
 
     # 设备当前是 Airtel，目标也是 Airtel → 跳过
     cur = conn.execute("INSERT INTO exec_logs(action_id,action_name,device_id,device_name,trigger,"
@@ -226,7 +238,7 @@ def test_target_line_skip():
     assert not skip and ok, (skip, err, note)
     cmds2 = [r["command"] for r in conn.execute(
         "SELECT command FROM exec_steps WHERE log_id=? ORDER BY id", (log2,)).fetchall()]
-    assert cmds2 == ["[线路查询] display ip routing-table", "sys", "quit"], cmds2
+    assert cmds2 == ["[线路查询] display ip routing-table 0.0.0.0", "sys", "quit"], cmds2
     print("PASS 场景11 当前线路(Airtel)≠目标线路(4G) → 正常下发 2 条命令")
     srv.shutdown()
 
@@ -326,6 +338,36 @@ def test_recover_running():
     print("PASS 场景15 重启恢复 running→failed（B3）")
 
 
+def test_copy_resources():
+    """复制站点保留线路但停用；复制设备保留密文和连接设置。"""
+    conn.commit()
+    source_site = conn.execute("SELECT * FROM sites WHERE id=1").fetchone()
+    first = app.copy_site(conn, source_site["id"])
+    second = app.copy_site(conn, source_site["id"])
+    assert first["name"] == source_site["name"] + "-副本", first
+    assert second["name"] == source_site["name"] + "-副本2", second
+    source_lines = conn.execute("SELECT name,alarm_keywords,nexthop_ip,priority,remark FROM lines WHERE site_id=1 ORDER BY id").fetchall()
+    copied_lines = conn.execute("SELECT name,alarm_keywords,nexthop_ip,priority,remark,enabled FROM lines WHERE site_id=? ORDER BY id", (first["id"],)).fetchall()
+    assert first["line_count"] == len(source_lines) == len(copied_lines)
+    assert [tuple(r) for r in source_lines] == [tuple(r)[:-1] for r in copied_lines]
+    assert all(r["enabled"] == 0 for r in copied_lines)
+    assert conn.execute("SELECT COUNT(*) FROM lines WHERE site_id=1 AND enabled=1").fetchone()[0] == len(source_lines)
+
+    source_dev = conn.execute("SELECT * FROM devices WHERE name='m'").fetchone()
+    copied = app.copy_device(conn, source_dev["id"])
+    copied_again = app.copy_device(conn, source_dev["id"])
+    assert copied["name"] == "m-副本" and copied_again["name"] == "m-副本2"
+    clone = conn.execute("SELECT * FROM devices WHERE id=?", (copied["id"],)).fetchone()
+    for field in ("site_id", "host", "port", "protocol", "username", "password_enc",
+                  "enable_password_enc", "init_command", "prompt", "timeout", "current_regex",
+                  "line_map", "enabled", "remark"):
+        assert clone[field] == source_dev[field], field
+    assert clone["status_command"] == app.DEFAULT_STATUS_COMMAND
+    assert app.decrypt_pw(clone["password_enc"]) == "Mock@123"
+    assert app.copy_site(conn, 999999) is None and app.copy_device(conn, 999999) is None
+    print("PASS 复制站点/设备：名称后缀、线路停用、加密凭据保留")
+
+
 if __name__ == "__main__":
     test_only_fault_line_active()
     test_degrade_to_third_line()
@@ -341,4 +383,5 @@ if __name__ == "__main__":
     test_bad_regex_not_hit()
     test_cooldown_per_direction()
     test_recover_running()
+    test_copy_resources()
     print("\n全部判定逻辑测试通过")
