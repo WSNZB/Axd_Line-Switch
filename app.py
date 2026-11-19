@@ -2598,14 +2598,14 @@ details summary:hover{color:var(--primary)}
   <!-- 切换动作 -->
   <div class="page-view" id="p-actions">
     <div class="card" style="margin-bottom:16px">
-      <div class="card-header"><h3>线路切换覆盖<span class="q" data-tip="降级阶梯总览：每条线路都应出现在某条规则的目标阶梯中。&#10;告警触发时按规则阶梯顺序（=优先级）逐条体检目标线路，选第一条无活跃告警且配了本方向命令的目标；全部告警/缺命令则不切换。&#10;点红色线路名可将其追加到规则阶梯。">?</span></h3>
+      <div class="card-header"><h3>线路切换覆盖</h3>
         <button class="btn btn-secondary btn-sm" onclick="loadActions()">刷新</button></div>
       <div class="card-body" id="cov_out"></div>
     </div>
     <div class="card">
-      <div class="card-header"><h3>动作规则<span class="q" data-tip="一条规则 = 一个降级阶梯：按顺序配置多个目标线路及各自的切换命令（命令块为全量状态：先 undo 其它方向再添加本方向，与从哪条切过来无关）。&#10;告警触发时按阶梯顺序（=优先级）逐条体检目标线路，选中第一条无活跃告警的目标并下发它的命令。&#10;降级顺序只在规则阶梯这一处维护；匹配关键词仅用于「匹配预检」与站点未配置线路时的兼容匹配；命令块中 # 开头行为注释，执行时跳过。">?</span></h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
+      <div class="card-header"><h3>动作规则</h3><button class="btn btn-primary" onclick="editAction(0)">＋ 新建切换规则</button></div>
       <div class="table-responsive"><table class="data-table"><thead><tr>
-        <th style="width:90px">状态</th><th style="width:220px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
+        <th style="width:76px">状态</th><th style="width:96px">站点</th><th style="width:220px">规则名 / 设备</th><th style="width:230px">目标阶梯（降级顺序）</th>
         <th>匹配关键词 / 正则（预检用）</th><th style="width:80px">冷却</th><th style="width:300px;text-align:right">执行操作</th></tr></thead>
       <tbody id="acttb"></tbody></table></div>
     </div>
@@ -3061,8 +3061,9 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
   DATA.actions=a;DATA.sites=s;DATA.devices=d;DATA.lines=lines;
   $("acttb").innerHTML=a.length?a.map(x=>`<tr${x.enabled?"":" class='row-off'"}>
     <td><div class="status-cell"><div class="${x.enabled?"dot-green":"dot-red"}"></div>${x.enabled?"启用":"停用"}</div></td>
+    <td class="cell1">${esc(x.site_name)||'<span style="color:var(--text-faint)">-</span>'}</td>
     <td><div class="device-info"><span class="device-name">${esc(x.name)}</span>
-      <span class="device-host">${esc(x.site_name?x.site_name+" · ":"")}${esc(x.protocol||"")}://${esc(x.host||"")}</span></div></td>
+      <span class="device-host">${esc(x.protocol||"")}://${esc(x.host||"")}</span></div></td>
     <td>${(()=>{let arr=[];try{arr=x.targets_json?JSON.parse(x.targets_json):[]}catch(e){}
       if(!arr.length&&x.target_line)arr=[{line:x.target_line,command_block:x.command_block}];
       return arr.length?arr.map((t,i)=>`<span class="tag ${t.command_block?'ok':'bad'}" style="margin:0 6px 2px 0"><b style="margin-right:3px">${i+1}.</b>${esc(t.line)}${t.command_block?'':'（缺命令）'}</span>`).join(''):'<span class="tag gray">未指定</span>'})()}</td>
@@ -3074,7 +3075,7 @@ function loadActions(){Promise.all([api("GET","/api/actions"),api("GET","/api/si
       <button class="btn btn-sm btn-secondary" onclick="editAction(${x.id})">编辑</button>
       <button class="btn btn-sm btn-secondary" onclick="copyAction(${x.id})">复制</button>
       <button class="btn btn-sm btn-danger" onclick="delAction(${x.id})">删除</button></div></td></tr>`).join(""):
-    '<tr><td colspan=6><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无切换规则</div></td></tr>';
+    '<tr><td colspan=7><div class="empty"><svg viewBox="0 0 24 24"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>暂无切换规则</div></td></tr>';
   renderCoverage()})}
 function fillSelect(sel,list,labelFirst){$(sel).innerHTML=`<option value="">(不选)</option>`+
   list.map(x=>`<option value="${x.id}">${esc(labelFirst?x.name:x.name+(x.host?" ("+x.host+")":""))}</option>`).join("")}
