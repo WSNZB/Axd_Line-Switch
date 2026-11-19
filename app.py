@@ -2233,6 +2233,19 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .data-table tr.clickable{cursor:pointer}
 .mono{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:12px}
 .flt-group{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;min-width:0}
+.sel{position:relative;height:34px;min-width:112px;border:1px solid var(--border2);border-radius:8px;background:#fff;display:inline-flex;align-items:center;padding:0 30px 0 12px;font-size:13px;color:var(--text-secondary);cursor:pointer;font-weight:550;user-select:none;transition:border-color .15s,box-shadow .15s}
+.sel:hover{border-color:#9aa8ba}
+.sel.open{border-color:var(--primary);box-shadow:0 0 0 3px var(--primary-ring)}
+.sel-lb{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sel-lb.ph{color:var(--text-faint);font-weight:400}
+.sel-arr{position:absolute;right:10px;top:50%;transform:translateY(-50%);display:flex;transition:transform .15s}
+.sel-arr svg{width:12px;height:12px;fill:none;stroke:var(--text-muted);stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.sel.open .sel-arr{transform:translateY(-50%) rotate(180deg)}
+.sel-menu{position:absolute;top:calc(100% + 6px);left:0;min-width:100%;background:#fff;border:1px solid var(--border);border-radius:10px;box-shadow:var(--sh-3);z-index:80;padding:4px;max-height:260px;overflow:auto}
+.sel-opt{padding:7px 10px;border-radius:7px;font-size:13px;cursor:pointer;display:flex;align-items:center;gap:8px;color:var(--text-secondary);white-space:nowrap}
+.sel-opt:hover{background:var(--bg-hover)}
+.sel-opt.on{color:var(--primary);font-weight:600;background:var(--primary-bg)}
+.sel-opt.on::before{content:"✓";font-size:11px}
 .flt-group select,.flt-group input{height:34px;font-size:13px;border:1px solid var(--border2);border-radius:var(--r-ctl);background-color:#fff;color:var(--text-main);outline:none;transition:border-color .15s,box-shadow .15s}
 .flt-group select{padding:0 34px 0 12px;width:auto;cursor:pointer;appearance:none;-webkit-appearance:none;font-weight:500;color:var(--text-secondary);
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8'%3E%3Cpath d='M1 1l5 5 5-5' stroke='%2364748b' stroke-width='2' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
@@ -2534,9 +2547,9 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-header">
         <div class="flt-group">
-        <select id="f_site" onchange="LOG_F.site=this.value;LOG_PAGE=1;loadLogs()"><option value="">全部站点</option></select>
-        <select id="f_dev" onchange="LOG_F.dev=this.value;LOG_PAGE=1;loadLogs()"><option value="">全部设备</option></select>
-        <select id="f_act" onchange="LOG_F.act=this.value;LOG_PAGE=1;loadLogs()"><option value="">全部动作</option></select>
+        <div class="sel" id="f_site"></div>
+        <div class="sel" id="f_dev"></div>
+        <div class="sel" id="f_act"></div>
         <input id="f_kw" placeholder="搜索标题/错误/动作关键字" oninput="LOG_F.kw=this.value.trim();clearTimeout(window.__kwT);window.__kwT=setTimeout(()=>{LOG_PAGE=1;loadLogs()},300)">
         </div>
         <button class="btn btn-secondary btn-sm" onclick="loadStats();loadLogs()" title="每 30 秒自动刷新；点击统计卡可按状态筛选">刷新</button></div>
@@ -2841,12 +2854,34 @@ const STAT=[
  ["verify_failed","验证未过","var(--warn-d)","",'<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>']];
 let LOG_FILTER="", LOG_F={site:"",dev:"",act:"",kw:""};
 let LOG_ALL=[];
+function initSel(id,ph,cb){const el=$(id);if(el._inited){el._ph=ph;el._cb=cb;return}el._inited=1;el.dataset.val="";el._ph=ph;el._cb=cb;el._opts=[];
+  el.innerHTML='<span class="sel-lb ph"></span><span class="sel-arr"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span>';
+  el.querySelector('.sel-lb').textContent=ph;
+  el.addEventListener("click",e=>{e.stopPropagation();
+    document.querySelectorAll(".sel.open").forEach(x=>{if(x!==el)closeSel(x)});
+    if(el.classList.contains("open")){closeSel(el);return}
+    el.classList.add("open");
+    const m=document.createElement("div");m.className="sel-menu";
+    m.innerHTML=`<div class="sel-opt${!el.dataset.val?" on":""}" data-v="">${esc(el._ph)}</div>`+
+      el._opts.map(o=>`<div class="sel-opt${o===el.dataset.val?" on":""}" data-v="${esc(o)}">${esc(o)}</div>`).join("");
+    el.appendChild(m);
+    m.querySelectorAll(".sel-opt").forEach(op=>op.onclick=ev=>{ev.stopPropagation();
+      const v=op.dataset.v;el.dataset.val=v;closeSel(el);
+      const lb=el.querySelector(".sel-lb");
+      lb.textContent=v||el._ph;lb.classList.toggle("ph",!v);
+      el._cb(v)})})}
+function closeSel(el){el.classList.remove("open");const m=el.querySelector(".sel-menu");if(m)m.remove()}
+document.addEventListener("click",()=>document.querySelectorAll(".sel.open").forEach(closeSel));
 function fillFilterOpts(){
   const sites={},devs={},acts={};
   LOG_ALL.forEach(l=>{if(l.site_name)sites[l.site_name]=1;if(l.device_name)devs[l.device_name]=1;if(l.action_name)acts[l.action_name]=1});
-  const set=(id,keys)=>{const sel=$(id);const v=sel.value;
-    sel.innerHTML=sel.options[0].outerHTML+Object.keys(keys).sort().map(k=>`<option value="${esc(k)}"${k===v?" selected":""}>${esc(k)}</option>`).join("")};
-  set("f_site",sites);set("f_dev",devs);set("f_act",acts)}
+  const upd=id=>{const el=$(id);if(!el||!el._opts)return void 0;
+    if(el.dataset.val&&!el._opts.includes(el.dataset.val)){el.dataset.val="";
+      const lb=el.querySelector(".sel-lb");lb.textContent=el._ph;lb.classList.add("ph")}};
+  $("f_site")._opts=Object.keys(sites).sort();
+  $("f_dev")._opts=Object.keys(devs).sort();
+  $("f_act")._opts=Object.keys(acts).sort();
+  ["f_site","f_dev","f_act"].forEach(upd)}
 function loadStats(){api("GET","/api/stats").then(s=>{
   $("ver").textContent=s.version;
   $("stat").innerHTML=STAT.map(x=>`<div class="stat-card${LOG_FILTER===(x[0]=='total'?'':x[0])?" on":""}" title="点击筛选该状态" onclick="setLogFilter('${x[0]=='total'?'':x[0]}')">
@@ -3314,7 +3349,10 @@ function testAlert(){const t=$("t_title").value.trim();if(!t)return showToast("�
 
 // ---- 启动 ----
 const PAGE_GROUP={dash:"monitor",match:"config",actions:"config",devices:"resource",sites:"resource",settings:"system",alerttest:"system"};
-function boot(){buildSideNav("monitor");openPage("dash");setInterval(()=>{loadStats();loadLogs()},30000);
+function boot(){initSel("f_site","全部站点",v=>{LOG_F.site=v;LOG_PAGE=1;loadLogs()});
+  initSel("f_dev","全部设备",v=>{LOG_F.dev=v;LOG_PAGE=1;loadLogs()});
+  initSel("f_act","全部动作",v=>{LOG_F.act=v;LOG_PAGE=1;loadLogs()});
+  buildSideNav("monitor");openPage("dash");setInterval(()=>{loadStats();loadLogs()},30000);
   const h=(location.hash||"").slice(1);
   if(PAGE_INFO[h])gotoGroup(PAGE_GROUP[h],h)}
 api("GET","/api/session").then(()=>{boot()}).catch(()=>{$("loginBox").classList.add("show")});
