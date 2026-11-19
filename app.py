@@ -2402,12 +2402,6 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 .content-scroll{flex:1;overflow-y:auto;padding:26px 32px 40px}
 .page-view{display:none;width:100%;max-width:1800px;margin:0 auto}
 .page-view.active{display:block;animation:fadeIn .22s ease}
-@media (min-width:1001px){
-  #p-dash.active{height:calc(100vh - 126px);display:flex;flex-direction:column}
-  #p-dash>.card{flex:1;min-height:340px;display:flex;flex-direction:column;margin-bottom:0}
-  #p-dash>.card>.table-responsive{flex:1;min-height:0}
-  #p-dash #logpg{margin-top:auto}
-}
 #p-settings .card,#p-alerttest .card{width:100%;max-width:none}
 #p-settings .card-body,#p-alerttest .card-body{padding:26px 30px}
 .settings-intro{margin-bottom:20px}
