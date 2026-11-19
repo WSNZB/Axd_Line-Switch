@@ -1874,6 +1874,12 @@ class Handler(BaseHTTPRequestHandler):
                 if log_id is None:
                     return self._send_json({"executed": False, "skip_reason": skip}, 409)
                 return self._send_json({"executed": True, "task_id": log_id})
+            if path == "/api/reveal_token":
+                pw = str(body.get("password") or "")
+                real = kv_get(conn, "web_password", "admin123")
+                if not hmac.compare_digest(pw, real):
+                    return self._send_json({"error": "密码验证失败"}, 403)
+                return self._send_json({"token": kv_get(conn, "api_token", "")})
             m4 = re.match(r"^/api/config$", path)
             if m4:
                 for k in ("global_cooldown", "continue_on_error", "api_token", "aiops_url",
@@ -2523,7 +2529,10 @@ details summary:hover{color:var(--primary)}
 .diag-box .stat-card{padding:14px 16px}
 .diag-btn-full{width:100%;justify-content:center}
 .btn-full{width:100%;justify-content:center}
-.sel-block{width:100%;display:flex}
+.diag-ctl-row{display:flex;align-items:center;gap:12px;margin-bottom:14px}
+.diag-ctl-lb{font-size:13px;font-weight:600;color:var(--text-secondary);white-space:nowrap}
+.diag-ctl-row .sel{min-width:120px}
+.diag-ctl-row .btn{margin-left:auto}
 
 /* ============ 登录 ============ */
 .login{position:fixed;inset:0;background:radial-gradient(760px 460px at 24% 18%,rgba(79,70,229,.28),transparent 62%),var(--sidebar-bg);display:none;align-items:center;justify-content:center;z-index:200}
@@ -2620,16 +2629,16 @@ details summary:hover{color:var(--primary)}
       <div class="diag-card">
         <div class="diag-hd">
           <div class="diag-ic"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M9 13h6M9 17h4"/></svg></div>
-          <div class="diag-title">单条即时诊断</div>
+          <div class="diag-title">单条即时匹配</div>
         </div>
-        <p class="diag-desc">用于即时排查：粘贴一条告警标题，查看它命中了哪条规则，并预览降级演算选中的目标线路。</p>
+        <p class="diag-desc">用于即时排查：粘贴一条告警标题，匹配它命中的规则，并预览降级演算选中的目标线路。</p>
         <div class="toolbar-row" style="margin-bottom:14px">
           <div class="input-group">
             <input id="mt_title" placeholder="例如：【ICMP丢包】拉米卡专线-Airtel专线（刚果金地址）" onkeydown="if(event.key=='Enter')matchTest()">
-            <button class="btn btn-primary" onclick="matchTest()">开始诊断</button>
+            <button class="btn btn-primary" onclick="matchTest()">开始匹配</button>
           </div>
         </div>
-        <div class="diag-box" id="mt_out"><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.97L12 12.01l8.73-5.04M12 22.08V12"/></svg>等待输入告警标题进行诊断...</div></div>
+        <div class="diag-box" id="mt_out"><div class="empty"><svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><path d="M3.27 6.97L12 12.01l8.73-5.04M12 22.08V12"/></svg>等待输入告警标题进行匹配...</div></div>
       </div>
       <!-- 右：批量覆盖率验证 -->
       <div class="diag-card">
@@ -2638,9 +2647,11 @@ details summary:hover{color:var(--primary)}
           <div class="diag-title">批量覆盖率验证</div>
         </div>
         <p class="diag-desc">用于整体验证：拉取近 N 天全部真实告警，检验现有规则的整体覆盖率与漏网标题。</p>
-        <label style="margin:0 0 8px">选择历史时间范围</label>
-        <div class="sel sel-block" id="rp_days"></div>
-        <button class="btn btn-secondary btn-full" style="margin:14px 0" onclick="replayRun()"><svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>开始批量验证</button>
+        <div class="diag-ctl-row">
+          <span class="diag-ctl-lb">时间范围</span>
+          <div class="sel" id="rp_days"></div>
+          <button class="btn btn-secondary" onclick="replayRun()"><svg viewBox="0 0 24 24" style="width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round"><path d="M21 12a9 9 0 1 1-3-6.7L21 8"/><path d="M21 3v5h-5"/></svg>开始批量验证</button>
+        </div>
         <div class="diag-box" id="rp_out"><div class="empty"><svg viewBox="0 0 24 24"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>系统将拉取历史告警并输出覆盖报告...</div></div>
       </div>
     </div>
@@ -2692,7 +2703,7 @@ details summary:hover{color:var(--primary)}
     <div class="card">
       <div class="card-body">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
-        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认掩码显示；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap"></span></div></div>
+        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认隐藏；点「查看」需再次验证登录密码；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap;display:inline-flex;align-items:center;gap:8px"></span></div></div>
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
         <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改"></div></div>
@@ -2705,8 +2716,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view" id="p-alerttest">
     <div class="card">
       <div class="card-body">
-        <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如 站点A-4G专线中断"></div></div>
-        <div style="margin-left:226px"><button class="btn btn-secondary" onclick="testAlert()">发送测试</button></div>
+        <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如 站点A-4G专线中断" onkeydown="if(event.key=='Enter')testAlert()"><button class="btn btn-secondary" onclick="testAlert()">发送测试</button></div></div>
         <pre class="out" id="t_out" style="display:none;margin-top:14px"></pre>
       </div>
     </div>
@@ -3380,8 +3390,19 @@ function delLine(id){if(!confirm("删除该线路？"))return;
 function loadCfg(){api("GET","/api/config").then(c=>{
   $("s_pwd").value="";$("s_token").value="";$("s_cd").value=c.global_cooldown||0;
   $("s_aiops_url").value=c.aiops_url||"";$("s_aiops_tok").value="";
-  $("token_hint").textContent=c.api_token_masked?("当前："+c.api_token_masked):"未设置";
+  $("token_hint").innerHTML=c.api_token_masked
+    ?`<button class="btn btn-sm btn-secondary" onclick="revealToken()">🔒 查看当前 Token</button>`
+    :'<span style="color:var(--text-faint)">未设置</span>';
 })}
+function revealToken(){const pw=prompt("查看 API Token 需验证当前登录密码：\n\n（密码仅用于本次验证，不会保存）","");
+  if(pw===null||pw==="")return;
+  api("POST","/api/reveal_token",{password:pw}).then(r=>{
+    if(r.error)return showToast(r.error,1);
+    const t=r.token||"";
+    $("token_hint").innerHTML=`<span class="mono" style="color:var(--text-main);background:var(--bg-hover);padding:4px 10px;border-radius:6px;word-break:break-all">${esc(t)}</span>
+      <button class="btn btn-sm btn-secondary" onclick="navigator.clipboard.writeText('${esc(t)}').then(()=>showToast('已复制'))">复制</button>
+      <button class="btn btn-sm btn-secondary" onclick="loadCfg()">隐藏</button>`;
+    showToast("已验证，Token 已显示")}).catch(e=>showToast("请求失败: "+e.message,1))}
 function saveCfg(){const b={global_cooldown:+$("s_cd").value||0,
   aiops_url:$("s_aiops_url").value.trim()};
   if($("s_token").value.trim())b.api_token=$("s_token").value.trim();
