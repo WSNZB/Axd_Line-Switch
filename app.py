@@ -2229,11 +2229,9 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
   #p-dash>.card>.table-responsive{flex:1;min-height:0}
   #p-dash #logpg{margin-top:auto}
 }
-#p-settings .card{max-width:1120px}
-#p-alerttest .card{max-width:1040px}
+#p-settings .card,#p-alerttest .card{width:100%;max-width:none}
 #p-settings .card-body,#p-alerttest .card-body{padding:26px 30px}
 .settings-intro{margin-bottom:20px}
-.settings-intro h3{font-size:15px;font-weight:650;color:var(--text-main)}
 .settings-intro p{margin-top:5px;color:var(--text-muted);font-size:12.5px;line-height:1.6}
 .settings-form{max-width:940px}
 .settings-form .kv{grid-template-columns:160px minmax(0,1fr);gap:18px}
@@ -2726,7 +2724,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view" id="p-settings">
     <div class="card">
       <div class="card-body">
-        <div class="settings-intro"><h3>全局设置</h3><p>管理登录凭据、告警接口和线路切换策略。</p></div>
+        <div class="settings-intro"><p>管理登录凭据、告警接口和线路切换策略。</p></div>
         <div class="settings-form">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
         <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认隐藏；点「查看」需再次验证登录密码；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap;display:inline-flex;align-items:center;gap:8px"></span></div></div>
@@ -2743,7 +2741,7 @@ details summary:hover{color:var(--primary)}
   <div class="page-view" id="p-alerttest">
     <div class="card">
       <div class="card-body">
-        <div class="settings-intro"><h3>回调测试</h3><p>输入告警标题，查看系统对这条回调的处理结果。</p></div>
+        <div class="settings-intro"><p>输入告警标题，查看系统对这条回调的处理结果。</p></div>
         <div class="settings-form">
         <div class="kv"><label>告警标题</label><div class="ctl"><input id="t_title" placeholder="如 站点A-4G专线中断" onkeydown="if(event.key=='Enter')testAlert()"><button class="btn btn-secondary" onclick="testAlert()">发送测试</button></div></div>
         <pre class="out callback-result" id="t_out" style="display:none;margin:14px 0 0 178px"></pre>
@@ -3316,7 +3314,6 @@ function loadDevices(){api("GET","/api/devices").then(d=>{DATA.devices=d;
       <button class="btn btn-sm btn-danger" onclick="delDevice(${x.id})">删除</button></div></td></tr>`).join(""):
     '<tr><td colspan=7><div class="empty"><svg viewBox="0 0 24 24"><rect x="2" y="3" width="20" height="8" rx="2"/><rect x="2" y="13" width="20" height="8" rx="2"/></svg>暂无设备</div></td></tr>'})}
 function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
-  api("GET","/api/sites").then(s=>{DATA.sites=s;fillSelect("d_site",s,true)});
   $("d_id").value=d.id||"";$("d_name").value=d.name||"";$("d_host").value=d.host||"";
   $("d_port").value=d.port||23;$("d_proto").value=d.protocol||"telnet";
   $("d_user").value=d.username||"";$("d_pwd").value="";$("d_epwd").value="";
@@ -3325,7 +3322,12 @@ function editDevice(id){const d=DATA.devices.find(x=>x.id==id)||{};
   $("d_scmd").value=d.status_command!=null?d.status_command:"display ip routing-table";
   $("d_cregex").value=d.current_regex||"";
   $("d_test").style.display="none";
-  $("mDevTitle").textContent=d.id?"编辑设备 #"+d.id:"新建设备";$("mDev").classList.add("show")}
+  $("mDevTitle").textContent=d.id?"编辑设备 #"+d.id:"新建设备";
+  api("GET","/api/sites").then(s=>{
+    DATA.sites=s;fillSelect("d_site",s,true);
+    $("d_site").value=String(d.site_id||"");
+    $("mDev").classList.add("show")
+  }).catch(e=>showToast("加载站点失败: "+e.message,1))}
 function devBody(){return{id:$("d_id").value||null,name:$("d_name").value.trim(),host:$("d_host").value.trim(),
   site_id:$("d_site").value?+$("d_site").value:null,port:+$("d_port").value||23,
   protocol:$("d_proto").value,username:$("d_user").value.trim(),
