@@ -1924,6 +1924,7 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception as e:
                     return self._send_json({"error": str(e)}, 400)
                 per_action = {}
+                matched_by_title = {}
                 unmatched = {}
                 matched_cnt = 0
                 for t in titles:
@@ -1933,9 +1934,14 @@ class Handler(BaseHTTPRequestHandler):
                         unmatched[k] = unmatched.get(k, 0) + 1
                     else:
                         matched_cnt += 1
+                        k = (t or "").strip() or "(空标题)"
+                        e = matched_by_title.setdefault(k, {"count": 0, "actions": []})
+                        e["count"] += 1
                         for h in hits:
                             nm = h["action"]["name"]
                             per_action[nm] = per_action.get(nm, 0) + 1
+                            if nm not in e["actions"]:
+                                e["actions"].append(nm)
                 unl = sorted(unmatched.items(), key=lambda x: -x[1])
                 return self._send_json({
                     "days": days, "fetched": len(titles), "aiops_total": total,
@@ -1943,6 +1949,9 @@ class Handler(BaseHTTPRequestHandler):
                     "per_action": sorted(per_action.items(), key=lambda x: -x[1]),
                     "unmatched_titles": [{"title": k, "count": v} for k, v in unl[:80]],
                     "unmatched_kinds": len(unl),
+                    "matched_titles": [{"title": k, "count": v["count"], "actions": v["actions"]}
+                                       for k, v in sorted(matched_by_title.items(),
+                                                          key=lambda x: -x[1]["count"])[:120]],
                 })
             return self._send_json({"error": "not found"}, 404)
         finally:
@@ -2590,7 +2599,7 @@ details summary:hover{color:var(--primary)}
         </div>
         <div id="mt_out"><div class="empty" style="padding:28px 24px"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><path d="M21 21l-4.35-4.35"/></svg>粘贴一条真实告警标题，校验它会命中哪条规则、降级预演会选中哪个目标线路<br><span style="font-size:12px">也可用下方「回放」以近几天真实告警批量检验规则覆盖</span></div></div>
         <div class="action-buttons" style="border-top:1px dashed var(--border);padding-top:16px">
-          <select id="rp_days"><option value="1">近 1 天</option><option value="7" selected>近 7 天</option><option value="14">近 14 天</option><option value="30">近 30 天</option></select>
+          <div class="sel" id="rp_days"></div>
           <button class="btn btn-secondary" onclick="replayRun()">拉取 AIOps 标题并回放<span class="q" style="margin-left:8px" data-tip="以真实告警校验规则覆盖情况；未命中标题用于补充关键词">?</span></button>
         </div>
         <div id="rp_out"></div>
@@ -3349,7 +3358,7 @@ function matchTest(){const t=$("mt_title").value.trim();if(!t)return;
       ?`<div class="hit-bad">规则 <b>${esc(x.action_name)}</b> 配置错误：${esc(x.reason)}</div>`
       :`<div class="hit-ok">命中动作 <b>${esc(x.action_name)}</b>（站点 ${esc(x.site||"-")} / 设备 ${esc(x.device?x.device.name:"-")} / ${x.command_lines} 条命令）</div>`).join("")}
     o.innerHTML=h||`<div class="hit-bad">未命中任何站点线路或动作</div>`})}
-function replayRun(){const d=+$("rp_days").value;
+function replayRun(){const v=$("rp_days").dataset.val||"7 天";const d=parseInt(v)||7;
   $("rp_out").innerHTML='<div style="color:var(--text-muted);padding:6px 0">正在拉取 AIOps 告警并回放，请稍候…</div>';
   api("POST","/api/match/replay",{days:d}).then(r=>{
     if(r.error){$("rp_out").innerHTML=`<div class="hit-bad">${esc(r.error)}</div>`;return}
@@ -3361,6 +3370,10 @@ function replayRun(){const d=+$("rp_days").value;
     if(r.per_action.length)
       h+=`<div class="table-responsive" style="border:1px solid var(--border);border-radius:8px"><table class="data-table"><thead><tr><th>动作</th><th style="width:120px">命中条数</th></tr></thead><tbody>`+
          r.per_action.map(x=>`<tr><td>${esc(x[0])}</td><td><b>${x[1]}</b></td></tr>`).join("")+`</tbody></table></div>`;
+    if((r.matched_titles||[]).length)
+      h+=`<h3 style="margin:20px 0 10px;font-size:14px;font-weight:600">命中明细（哪些告警标题命中了哪条规则）</h3>
+          <div class="table-responsive" style="border:1px solid var(--border);border-radius:8px"><table class="data-table"><thead><tr><th style="width:80px">次数</th><th>告警标题</th><th style="width:340px">命中规则</th></tr></thead><tbody>`+
+         r.matched_titles.map(x=>`<tr><td><b>${x.count}</b></td><td><span class="keyword-text">${esc(x.title)}</span></td><td>${x.actions.map(a=>`<span class="tag ok" style="margin:0 6px 3px 0">${esc(a)}</span>`).join("")}</td></tr>`).join("")+`</tbody></table></div>`;
     if(r.unmatched_titles.length)
       h+=`<h3 style="margin:20px 0 10px;font-size:14px;font-weight:600">未命中标题（按次数排序，判断是否属于「不需要切换」的告警）</h3>
           <div class="table-responsive" style="border:1px solid var(--border);border-radius:8px"><table class="data-table"><thead><tr><th style="width:80px">次数</th><th>告警标题</th></tr></thead><tbody>`+
@@ -3372,7 +3385,9 @@ function testAlert(){const t=$("t_title").value.trim();if(!t)return showToast("�
 
 // ---- 启动 ----
 const PAGE_GROUP={dash:"monitor",match:"config",actions:"config",devices:"resource",sites:"resource",settings:"system",alerttest:"system"};
-function boot(){initSel("f_site","全部站点",v=>{LOG_F.site=v;LOG_PAGE=1;loadLogs()});
+function boot(){initSel("rp_days","7 天",v=>{});$("rp_days")._opts=["1 天","7 天","14 天","30 天"];
+  $("rp_days").dataset.val="7 天";{const lb=$("rp_days").querySelector(".sel-lb");lb.textContent="7 天";lb.classList.remove("ph")}
+  initSel("f_site","全部站点",v=>{LOG_F.site=v;LOG_PAGE=1;loadLogs()});
   initSel("f_dev","全部设备",v=>{LOG_F.dev=v;LOG_PAGE=1;loadLogs()});
   initSel("f_act","全部动作",v=>{LOG_F.act=v;LOG_PAGE=1;loadLogs()});
   buildSideNav("monitor");openPage("dash");setInterval(()=>{loadStats();loadLogs()},30000);
