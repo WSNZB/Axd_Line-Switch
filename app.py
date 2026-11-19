@@ -698,9 +698,9 @@ def line_steps_evidence_html(plan):
         out.append('<table class="ev-table">%s%s</table>' % (head, "".join(rows)))
     disp = plan.get("trace", {}).get("display") or []
     if disp:
-        req_lines = "".join('<div style="margin-top:6px;font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:#334155;word-break:break-all;line-height:1.6"><span style="color:#0369a1">GET</span> %s</div>' % e(u) for u in disp)
-        out.append('<div style="margin-top:14px;font-size:12px;font-weight:600;color:var(--text-muted)">实际发出的查询请求（%d 条）</div>'
-                   '<div style="margin-top:2px">%s</div>' % (len(disp), req_lines))
+        req_blocks = "".join('<pre style="margin:6px 0 0;background:#0f172a;color:#e2e8f0;font-size:11px;padding:10px 12px;border-radius:6px;overflow:auto;white-space:pre-wrap;word-break:break-all;line-height:1.6"><span style="color:#38bdf8">GET</span> %s</pre>' % e(u) for u in disp)
+        out.append('<div style="margin-top:14px;font-size:12px;font-weight:600;color:var(--text-muted)">实际发出的查询请求（%d 条）</div>%s'
+                   % (len(disp), req_blocks))
     raws = plan.get("trace", {}).get("raws") or []
     if raws:
         blocks = "".join('<div style="margin-top:6px;font-size:11px;color:#94a3b8">响应 %d：</div>'
@@ -1297,8 +1297,7 @@ def _run_session(dev, conn, log_id, cmds, dry_run, verify_cmds=None, expect_kws=
                     missing = [k for k in expect_kws if k.lower() not in vtext.lower()]
                     if missing:
                         verify_ok = False
-                        verr = ("切换命令已下发，但验证未通过：路由表/回显中未找到期望内容 %s"
-                                "（切换前线路: %s，可能路由未收敛或切换失败）"
+                        verr = ("验证未通过：路由表未包含期望下一跳 %s（切换前线路: %s）"
                                 % (",".join(missing), precheck_disp or precheck_line or "未知"))
                         tl_append(conn, log_id, "验证未通过：路由表未包含 %s" % "、".join(missing), "bad")
                     else:
@@ -2324,7 +2323,7 @@ pre.out{background:#0f172a;color:#cbd5e1;padding:14px 16px;border-radius:10px;fo
 pre.out .err{color:#fca5a5}
 
 /* ---- 执行详情：结构化元数据 / 折叠面板 / 终端窗口（参考稿样式） ---- */
-.meta-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px 24px;background:var(--bg-subtle);padding:18px 20px;border-radius:10px;border:1px solid var(--border);margin-bottom:20px}
+.meta-grid{display:grid;grid-template-columns:2fr 1fr 1.3fr;gap:16px 24px;background:var(--bg-subtle);padding:18px 20px;border-radius:10px;border:1px solid var(--border);margin-bottom:20px}
 .meta-item{display:flex;flex-direction:column;gap:4px}
 .meta-label{font-size:12px;color:var(--text-muted)}
 .meta-value{font-size:14px;font-weight:500;color:var(--text-main);word-break:break-all}
@@ -2370,7 +2369,7 @@ pre.out .err{color:#fca5a5}
 .verdict-tag{font-size:14px;font-weight:700;white-space:nowrap}
 .verdict-route{font-size:14px;color:var(--text-secondary);white-space:nowrap}
 .verdict-route b{font-size:15px;color:var(--text-main)}
-.verdict-why{font-size:12.5px;color:var(--text-muted);line-height:1.5;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+.verdict-why{font-size:12.5px;color:var(--text-muted);line-height:1.5;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .verdict.ok{background:var(--success-bg);border-color:var(--success-bd)}.verdict.ok .verdict-tag{color:var(--success-d)}
 .verdict.bad{background:var(--danger-bg);border-color:var(--danger-bd)}.verdict.bad .verdict-tag{color:var(--danger-d)}
 .verdict.warn{background:var(--warn-bg);border-color:var(--warn-bd)}.verdict.warn .verdict-tag{color:var(--warn-d)}
@@ -2395,6 +2394,12 @@ pre.out .err{color:#fca5a5}
 .tlx-ts{font-size:12px;color:var(--text-muted);font-family:ui-monospace,Menlo,Consolas,monospace;white-space:nowrap}
 .tlx-bd{margin-top:8px}
 .tlx-panel{margin-top:12px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
+details.tlx-panel>summary.tlx-panel-hd{list-style:none;cursor:pointer}
+details.tlx-panel>summary.tlx-panel-hd::-webkit-details-marker{display:none}
+.tlx-panel-arrow{margin-left:auto;display:flex}
+.tlx-panel-arrow svg{width:15px;height:15px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;color:var(--text-muted);transition:transform .2s}
+details.tlx-panel[open] .tlx-panel-arrow svg{transform:rotate(180deg)}
+details.tlx-panel:not([open]) .tlx-panel-hd{border-bottom:none}
 .tlx-panel-hd{background:var(--bg-subtle);padding:10px 16px;font-size:13px;font-weight:550;color:var(--text-secondary);border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px}
 .tlx-panel-hd svg{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;flex-shrink:0;color:var(--text-muted)}
 .tlx-panel-bd{padding:16px;background:#fff;overflow-x:auto}
@@ -2817,15 +2822,16 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
   const c=CON[l.status]||[l.status,l.status];
   const fromLine=(l.precheck_line||l.source_line||"").split(" ")[0]||"-";
   const toLine=l.status==="success"?(l.target_line||"-"):(l.status==="skipped"||l.status==="cooldown_skip"?fromLine:"-");
-  const why=l.error||l.decision_note||"";
+  let why=l.error||l.decision_note||"";
+  why=why.replace(/^切换命令已下发，但/,"").replace(/，请检查命令块输出或改在验证命令块配置查询命令/,"").replace(/，可能路由未收敛或切换失败/,"");
   let h=`<div class="verdict ${c[0]}">
     <span class="verdict-tag">${c[1]}</span>
     <span class="verdict-route">${esc(fromLine)} → <b>${esc(toLine)}</b></span>
-    <span class="verdict-why">${esc(why)}</span></div>
+    <span class="verdict-why" title="${esc(l.error||l.decision_note||"")}">${esc(why)}</span></div>
   <div class="meta-grid">
     <div class="meta-item"><span class="meta-label">告警标题</span><span class="meta-value title">${esc(l.alarm_title)||"-"}</span></div>
     <div class="meta-item"><span class="meta-label">设备</span><span class="meta-value">${esc(l.device_name)||"-"}</span></div>
-    <div class="meta-item"><span class="meta-label">耗时</span><span class="meta-value">${esc(l.started_at)} → ${esc((l.finished_at||"").slice(11))||"-"}</span></div>
+    <div class="meta-item"><span class="meta-label">耗时</span><span class="meta-value mono" style="font-size:13px;white-space:nowrap">${esc(l.started_at)} <span style="color:var(--text-muted)">→</span> ${esc((l.finished_at||"").slice(11))||"-"}</span></div>
   </div>`;
   let tl=[];try{tl=JSON.parse(l.timeline||"[]")}catch(e){}
   if(tl.length){
@@ -2833,7 +2839,7 @@ function showLog(id){api("GET","/api/logs/"+id).then(l=>{
     h+=`<div class="tlx-card"><div class="tlx-title">执行过程</div><div class="tlx">`+
       items.map((t,idx)=>{
         const ic=TL_IC[t.kind]||TL_IC.info;
-        const nested=(t.evh?`<div class="tlx-panel"><div class="tlx-panel-hd"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>证据 · 线路体检<span class="q" data-tip="判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。">?</span></div><div class="tlx-panel-bd">${t.evh}</div></div>`
+        const nested=(t.evh?`<details class="tlx-panel"${t.kind=="bad"?" open":""}><summary class="tlx-panel-hd"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>证据 · 线路体检<span class="q" data-tip="判定逻辑：故障线路=告警标题匹配站点线路关键字；再按规则阶梯顺序用目标线路关键字查询 AIOps（未忽略+未处理/处理中），第一条无活跃告警且配了本方向命令的目标即选中。">?</span><span class="tlx-panel-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></span></summary><div class="tlx-panel-bd">${t.evh}</div></details>`
           :(t.ev?`<details class="tlx-ev"${t.kind=="bad"?" open":""}><summary>${t.step?"命令回显":"证据"}</summary><div class="terminal-window" style="margin-top:6px"><div class="terminal-header"><div class="mac-dots"><div class="dot red"></div><div class="dot yellow"></div><div class="dot green"></div></div><span class="terminal-title">${t.step?"Command Output":"Evidence"}</span></div><div class="terminal-body" style="max-height:240px">${esc(t.ev)}</div></div></details>`:""));
         return `<div class="tlx-item ${t.kind||""}">
           <div class="tlx-ic"><div class="tlx-dot">${ic}</div>${idx<items.length-1?'<div class="tlx-line"></div>':''}</div>
