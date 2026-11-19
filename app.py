@@ -2118,7 +2118,7 @@ class Handler(BaseHTTPRequestHandler):
 
     # ---- 页面 ----
     def _page(self):
-        html = PAGE_HTML.encode("utf-8")
+        html = PAGE_HTML.replace("__VER__", VERSION).encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(html)))
@@ -2168,7 +2168,7 @@ body{display:flex;flex-direction:column;height:100vh;background:var(--bg-body);c
 
 /* ============ 顶部一级菜单 ============ */
 .headerbar{height:60px;background:linear-gradient(180deg,#111c31,#0f172a);display:flex;align-items:center;padding:0 24px;gap:8px;flex-shrink:0;z-index:30;box-shadow:0 1px 0 rgba(255,255,255,.06) inset,0 1px 4px rgba(15,23,42,.28)}
-.logo-icon{width:32px;height:32px;background:linear-gradient(135deg,#6366f1,#4f46e5 55%,#4338ca);border-radius:9px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:16px;flex-shrink:0;box-shadow:0 2px 6px rgba(79,70,229,.45),inset 0 1px 0 rgba(255,255,255,.25)}
+.logo-icon{width:32px;height:32px;background:linear-gradient(135deg,#6366f1,#4f46e5 55%,#4338ca);border-radius:9px;display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 2px 6px rgba(79,70,229,.45),inset 0 1px 0 rgba(255,255,255,.25)}
 .brand{color:#fff;font-size:15px;font-weight:600;letter-spacing:.3px;margin-right:28px;white-space:nowrap}
 .top-nav{display:flex;gap:4px}
 .top-nav button{border:none;background:none;color:var(--sidebar-text);font-size:14px;padding:9px 20px;border-radius:6px;cursor:pointer;transition:all .2s;position:relative}
@@ -2482,9 +2482,12 @@ details summary:hover{color:var(--primary)}
 .login{position:fixed;inset:0;background:radial-gradient(760px 460px at 24% 18%,rgba(79,70,229,.28),transparent 62%),var(--sidebar-bg);display:none;align-items:center;justify-content:center;z-index:200}
 .login.show{display:flex}
 .login .box{background:#fff;border-radius:16px;padding:36px 34px;width:360px;box-shadow:0 32px 80px rgba(0,0,0,.5),0 0 0 1px rgba(255,255,255,.08)}
-.login .lg-logo{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,#6366f1,#4338ca);display:flex;align-items:center;justify-content:center;color:#fff;font-weight:bold;font-size:24px;margin-bottom:16px;box-shadow:0 4px 12px rgba(79,70,229,.4)}
-.login h3{font-size:18px;margin-bottom:4px}
-.login .ls{font-size:12.5px;color:var(--text-muted);margin-bottom:22px}
+.login .lg-head{display:flex;align-items:center;gap:14px;margin-bottom:22px}
+.login .lg-logo{width:44px;height:44px;border-radius:12px;background:linear-gradient(135deg,#6366f1,#4338ca);display:flex;align-items:center;justify-content:center;flex-shrink:0;box-shadow:0 4px 12px rgba(79,70,229,.4)}
+.login .lg-logo svg{width:24px;height:24px;fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round}
+.login h3{font-size:19px;margin:0}
+.lg-ver{text-align:center;font-size:11px;color:var(--text-faint);margin-top:12px}
+
 .login input{padding:11px 13px;font-size:14px}
 .login .btn{width:100%;padding:11px;font-size:14px;margin-top:12px}
 #lg_err{color:var(--danger);margin-top:10px;font-size:12.5px}
@@ -2517,7 +2520,7 @@ details summary:hover{color:var(--primary)}
 
 <!-- 顶部一级菜单 -->
 <header class="headerbar">
-  <div class="logo-icon">A</div>
+  <div class="logo-icon"><svg viewBox="0 0 24 24" style="width:19px;height:19px;fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round"><polyline points="17 2 22 7 17 12"/><path d="M22 7H4"/><polyline points="7 12 2 17 7 22"/><path d="M2 17h18"/></svg></div>
   <div class="brand">线路切换平台</div>
   <nav class="top-nav" id="topNav">
     <button class="active" data-g="monitor">监控中心</button>
@@ -2657,11 +2660,10 @@ details summary:hover{color:var(--primary)}
 <!-- 登录 -->
 <div class="login" id="loginBox">
   <div class="box">
-    <div class="lg-logo">A</div>
-    <h3>线路切换平台</h3>
-    <div class="ls">告警驱动 · 线路自动切换控制台</div>
+    <div class="lg-head"><div class="lg-logo"><svg viewBox="0 0 24 24" style="width:19px;height:19px;fill:none;stroke:#fff;stroke-width:2.2;stroke-linecap:round;stroke-linejoin:round"><polyline points="17 2 22 7 17 12"/><path d="M22 7H4"/><polyline points="7 12 2 17 7 22"/><path d="M2 17h18"/></svg></div><h3>线路切换平台</h3></div>
     <input type="password" id="lg_pwd" placeholder="Web 登录密码" onkeydown="if(event.key=='Enter')doLogin()">
     <button class="btn btn-primary" onclick="doLogin()">登 录</button>
+    <div class="lg-ver" id="lg_ver">__VER__</div>
     <div id="lg_err"></div>
   </div>
 </div>
