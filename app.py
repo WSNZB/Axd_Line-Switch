@@ -333,8 +333,20 @@ def kv_set(conn, key, value):
 
 
 # --------------------------------------------------------------- 匹配 ----
+def split_alarm_keywords(keywords):
+    """告警匹配词：英文/中文逗号分隔，忽略空项和重复项。"""
+    words = [w.strip() for w in re.split(r"[,，]", keywords or "") if w.strip()]
+    seen = set()
+    result = []
+    for word in words:
+        if word.lower() not in seen:
+            seen.add(word.lower())
+            result.append(word)
+    return result
+
+
 def match_actions(conn, title):
-    """返回 (命中的动作列表)。contains: 逗号分隔关键词全部包含(不区分大小写)；regex: re.search。
+    """返回 (命中的动作列表)。contains: 逗号分隔关键词任一包含(不区分大小写)；regex: re.search。
     正则语法错误的规则不算命中（见 match_detail 的 error 标记）。"""
     return [m["action"] for m in match_detail(conn, title) if not m.get("error")]
 
@@ -358,14 +370,16 @@ def match_detail(conn, title):
                 hits.append({"action": a, "reason": "正则语法错误: %s（该规则不会触发任何切换，请修正）" % e,
                              "error": True})
         else:
-            words = [w.strip() for w in kw.split(",") if w.strip()]
-            if words and all(w.lower() in t.lower() for w in words):
-                hits.append({"action": a, "reason": "关键词全部命中: %s" % ",".join(words)})
+            words = split_alarm_keywords(kw)
+            found = next((w for w in words if w.lower() in t.lower()), None)
+            if found:
+                hits.append({"action": a, "reason": "关键词命中: %s" % found})
     return hits
 
 
 def query_line_active(conn, gs_kw):
-    """以线路告警关键字作为 gs 直接查询该线路是否存在 未处理(status=0)/处理中(status=1)
+    """逐个以线路告警关键字作为 gs 查询；任一关键字有活跃告警即视为线路有告警。
+    查询 未处理(status=0)/处理中(status=1)
     且未忽略(is_ignore=0) 的告警；不附加时间过滤（状态即代表当前活跃）。
     返回 {"pending": n1, "handling": n2, "titles": [样例标题...], "requests": [url...],
           "raw": 首页原始响应}；查询失败抛异常。"""
@@ -377,44 +391,43 @@ def query_line_active(conn, gs_kw):
         raise RuntimeError("未配置 AIOps Token")
     result = {"pending": 0, "handling": 0, "titles": [], "requests": [], "raw": "",
               "display": [], "raws": [], "gs_label": gs_kw}
-    for status_key, status in (("pending", 0), ("handling", 1)):
-        sul = json.dumps([{"attr": "is_ignore", "search": [0], "operator": "="},
-                          {"attr": "status", "search": [status], "operator": "="}],
-                         ensure_ascii=False)
-        params = {"gs": gs_kw, "offset": 0, "limit": 5, "search_unit_list": sul}
-        full_url = api + "?" + urllib.parse.urlencode(params)
-        result["requests"].append(full_url)
-        # 展示用：gs/JSON 保持中文原文（不 URL 编码），参数顺序与紧凑格式便于人核对
-        sul_c = json.dumps([{"attr": "is_ignore", "search": [0], "operator": "="},
-                           {"attr": "status", "search": [status], "operator": "="}],
-                          ensure_ascii=False, separators=(",", ":"))
-        result["display"].append("%s?offset=0&limit=5&gs=%s&search_unit_list=%s"
-                                 % (api.split("?")[0], gs_kw, sul_c))
-        req = urllib.request.Request(full_url, headers={"token": token})
-        with urllib.request.urlopen(req, timeout=20) as r:
-            raw = r.read().decode("utf-8")
-        d = json.loads(raw)
-        if d.get("code") != 0:
-            raise RuntimeError("AIOps 接口返回错误: %s" % str(d)[:160])
-        data = d.get("data") or {}
-        result[status_key] = data.get("count") or 0
-        result["raws"].append(raw[:600])
-        if not result["raw"]:
-            result["raw"] = raw[:3000]
-        for it in (data.get("list") or [])[:3]:
-            t = it.get("alarm_title") or ""
-            if t and t not in result["titles"]:
-                result["titles"].append(t)
+    for word in split_alarm_keywords(gs_kw):
+        for status_key, status in (("pending", 0), ("handling", 1)):
+            sul = json.dumps([{"attr": "is_ignore", "search": [0], "operator": "="},
+                              {"attr": "status", "search": [status], "operator": "="}],
+                             ensure_ascii=False)
+            params = {"gs": word, "offset": 0, "limit": 5, "search_unit_list": sul}
+            full_url = api + "?" + urllib.parse.urlencode(params)
+            result["requests"].append(full_url)
+            # 展示用：gs/JSON 保持中文原文（不 URL 编码），参数顺序与紧凑格式便于人核对
+            sul_c = json.dumps([{"attr": "is_ignore", "search": [0], "operator": "="},
+                               {"attr": "status", "search": [status], "operator": "="}],
+                              ensure_ascii=False, separators=(",", ":"))
+            result["display"].append("%s?offset=0&limit=5&gs=%s&search_unit_list=%s"
+                                     % (api.split("?")[0], word, sul_c))
+            req = urllib.request.Request(full_url, headers={"token": token})
+            with urllib.request.urlopen(req, timeout=20) as r:
+                raw = r.read().decode("utf-8")
+            d = json.loads(raw)
+            if d.get("code") != 0:
+                raise RuntimeError("AIOps 接口返回错误: %s" % str(d)[:160])
+            data = d.get("data") or {}
+            result[status_key] += int(data.get("count") or 0)
+            result["raws"].append(raw[:600])
+            if not result["raw"]:
+                result["raw"] = raw[:3000]
+            for it in (data.get("list") or [])[:3]:
+                t = it.get("alarm_title") or ""
+                if t and t not in result["titles"]:
+                    result["titles"].append(t)
     return result
 
 
 def _kw_match(keywords, text):
-    """线路告警关键词匹配：逗号分隔，全部包含(不区分大小写)视为命中。"""
-    words = [w.strip() for w in (keywords or "").split(",") if w.strip()]
-    if not words:
-        return False
+    """线路告警关键词匹配：逗号分隔，任意包含(不区分大小写)视为命中。"""
+    words = split_alarm_keywords(keywords)
     t = (text or "").lower()
-    return all(w.lower() in t for w in words)
+    return any(w.lower() in t for w in words)
 
 
 def site_lines(conn, site_id):
@@ -565,7 +578,7 @@ def plan_switch(conn, title, site_id=None):
             st["status"] = "fault"
             return st
         kw = (ln["alarm_keywords"] or "").strip() if ln else ""
-        if not kw:
+        if not split_alarm_keywords(kw):
             st["status"] = "no_keyword"
             return st
         if name in line_cache:
@@ -1234,8 +1247,7 @@ def site_line_ip_map(conn, site_id):
         if ip:
             m.setdefault(ip, ln["name"])
     for ln in rows:
-        for w in (ln["alarm_keywords"] or "").split(","):
-            w = w.strip()
+        for w in split_alarm_keywords(ln["alarm_keywords"]):
             if re.match(r"^(?:\d{1,3}\.){3}\d{1,3}$", w):
                 m.setdefault(w, ln["name"])
     return m
@@ -2675,9 +2687,11 @@ select{appearance:none;background-image:url("data:image/svg+xml,%3Csvg xmlns='ht
 .mbd{padding:8px 24px 8px;max-height:calc(100vh - 230px);overflow-y:auto}
 .mfoot{padding:16px 24px;border-top:1px solid var(--border);display:flex;gap:8px;justify-content:flex-end;align-items:center}
 .mfoot .sp{flex:1}
-#mLine .data-table{min-width:1020px}
-#mLine .data-table td{white-space:nowrap}
-#mLine .keyword-text{max-width:none;white-space:nowrap;word-break:normal}
+#mLine .data-table{min-width:1020px;table-layout:fixed}
+#mLine .data-table th,#mLine .data-table td{padding-left:12px;padding-right:12px}
+#mLine .data-table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#mLine .data-table td input,#mLine .data-table td select{width:100%;min-width:0;box-sizing:border-box}
+#mLine .keyword-text{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;word-break:normal}
 
 /* ============ 终端输出 ============ */
 pre.out{background:#0f172a;color:#cbd5e1;padding:14px 16px;border-radius:10px;font-size:12px;font-family:ui-monospace,Menlo,Consolas,monospace;line-height:1.65;overflow:auto;max-height:280px;white-space:pre-wrap;border:1px solid #1e293b}
@@ -3057,7 +3071,7 @@ details summary:hover{color:var(--primary)}
   </div>
   <div class="grid2">
     <div><label>故障线路（告警说的是哪条）<span class="q" data-tip="读取站点维护的线路。选中后自动填充匹配关键词=该线路告警关键字，用于「匹配预检」；站点未配线路时它就是触发关键词。">?</span></label><select id="a_line" onchange="onActionLineChange()"></select></div>
-    <div><label>匹配关键词 / 正则（站点已配线路时仅预检用）</label><input id="a_kw" placeholder="选择故障线路后自动填充"></div>
+    <div><label>规则匹配关键词 / 正则（关键词逗号分隔为或）</label><input id="a_kw" placeholder="选择故障线路后自动填充"></div>
   </div>
   <textarea id="a_rb" style="display:none"></textarea>
   <label>目标线路优先级（第 1 优先级最高）<span class="q" data-tip="收到该线路告警后：从第 1 优先级开始依次查询目标线路是否有未处理/处理中告警，选中第一条健康且配了切换命令的目标并下发它的命令块。&#10;每个目标的命令块建议为「全量状态」：undo 其它方向策略 + 添加本方向。&#10;期望关键词默认取该线路下一跳IP，用于切换后验证路由指向。">?</span></label>
@@ -3135,13 +3149,13 @@ details summary:hover{color:var(--primary)}
   <div class="mhd"><h3 id="mLineTitle">站点线路</h3><button class="mx" onclick="closeM('mLine')">✕</button></div>
   <div class="mbd">
   <input type="hidden" id="l_site">
-  <div class="table-responsive"><table class="data-table"><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" data-tip="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th style="width:90px">状态</th><th style="width:100px;text-align:right">操作</th></tr></thead>
+  <div class="table-responsive"><table class="data-table"><colgroup><col style="width:13%"><col style="width:50%"><col style="width:15%"><col style="width:8%"><col style="width:14%"></colgroup><thead><tr><th>线路名</th><th>告警关键词</th><th>下一跳IP<span class="q" data-tip="该线路生效时路由表 0.0.0.0/0 的下一跳地址，用于识别「当前运行在哪条线路上」">?</span></th><th>状态</th><th style="text-align:right">操作</th></tr></thead>
   <tbody id="ltb"></tbody></table></div>
   <div class="grid2" style="margin-top:14px">
     <div><label>线路名</label><input id="l_name" placeholder="如 Airtel"></div>
     <div><label>下一跳IP（该线路生效时 0.0.0.0/0 的 NextHop）</label><input id="l_ip" placeholder="如 192.168.130.10"></div>
   </div>
-  <div><label>告警关键词(逗号分隔)</label><input id="l_kw" placeholder="如 41.243.21.170,Airtel"></div>
+  <div><label>告警关键词（逗号分隔，任意一个命中）</label><input id="l_kw" placeholder="如 【ICMP丢包】拉米卡-Airtel,【ICMP中断】拉米卡-Airtel"></div>
   </div>
   <div class="mfoot">
     <button class="btn btn-secondary" onclick="closeM('mLine')">关闭</button>
@@ -3768,13 +3782,13 @@ function loadLines(siteId){api("GET","/api/lines?site_id="+siteId).then(ls=>{
   $("ltb").innerHTML=ls.length?ls.map(l=>{
     if(LINE_EDIT===l.id)return `<tr>
       <td style="width:130px"><input id="ln_${l.id}" value="${esc(l.name)}" style="padding:6px 10px;font-size:12.5px"></td>
-      <td><input id="lk_${l.id}" value="${esc(l.alarm_keywords)}" placeholder="如 41.243.21.170,Airtel" style="padding:6px 10px;font-size:12.5px"></td>
+      <td><input id="lk_${l.id}" value="${esc(l.alarm_keywords)}" placeholder="如 【ICMP丢包】拉米卡-Airtel,【ICMP中断】拉米卡-Airtel" style="padding:6px 10px;font-size:12.5px"></td>
       <td style="width:170px"><input id="li_${l.id}" value="${esc(l.nexthop_ip)}" class="mono" placeholder="下一跳IP" style="padding:6px 10px;font-size:12.5px"></td>
       <td><select id="le_${l.id}" style="padding:5px 6px;font-size:12px"><option value="1"${l.enabled?" selected":""}>启用</option><option value="0"${l.enabled?"":" selected"}>停用</option></select></td>
       <td><div class="ops-cell"><button class="btn btn-sm btn-primary" onclick="saveLine(${l.id})">保存</button>
       <button class="btn btn-sm btn-secondary" onclick="LINE_EDIT=null;loadLines(+$('l_site').value)">取消</button></div></td></tr>`;
     return `<tr>
-    <td><b>${esc(l.name)}</b></td><td><span class="keyword-text mono" style="color:var(--text-muted)">${esc(l.alarm_keywords)||'(空)'}</span></td>
+    <td title="${esc(l.name)}"><b>${esc(l.name)}</b></td><td><span class="keyword-text mono" style="color:var(--text-muted)" title="${esc(l.alarm_keywords||'(空)')}">${esc(l.alarm_keywords)||'(空)'}</span></td>
     <td class="mono" style="color:var(--text-muted)">${esc(l.nexthop_ip)||'-'}</td>
     <td><div class="status-cell"><div class="${l.enabled?"dot-green":"dot-red"}"></div>${l.enabled?"启用":"停用"}</div></td>
     <td><div class="ops-cell"><button class="btn btn-sm btn-secondary" onclick="LINE_EDIT=${l.id};loadLines(+$('l_site').value)">编辑</button>

@@ -13,22 +13,26 @@ AIOps 接口用假数据注入，不依赖外网。
 """
 import os
 import json
+import io
 import sys
 import tempfile
 import threading
+from unittest.mock import patch
+from urllib.parse import parse_qs, urlparse
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, BASE)
 os.environ["LS_DB"] = tempfile.mktemp(suffix="_test.db")
 import app  # noqa: E402
+REAL_QUERY_LINE_ACTIVE = app.query_line_active
 
 app.init_db()
 conn = app.get_db()
 conn.execute("INSERT INTO sites(name) VALUES('华刚卢本')")      # 1
 conn.execute("INSERT INTO sites(name) VALUES('未配线路站点')")  # 2
-for name, kw, pri, nh in [("Airtel", "41.243.21.170,Airtel", 1, "192.168.130.10"),
-                          ("Vodacom", "41.243.21.170,Vodacom", 2, "1.1.1.1"),
-                          ("4G", "41.243.21.170,4G", 3, "192.168.130.22")]:
+for name, kw, pri, nh in [("Airtel", "【ICMP中断】41.243.21.170-华刚卢本-Airtel,【ICMP丢包】41.243.21.170-华刚卢本-Airtel", 1, "192.168.130.10"),
+                          ("Vodacom", "【ICMP中断】41.243.21.170-华刚卢本-Vodacom,【ICMP丢包】41.243.21.170-华刚卢本-Vodacom", 2, "1.1.1.1"),
+                          ("4G", "【ICMP中断】41.243.21.170-华刚卢本-4G,【ICMP丢包】41.243.21.170-华刚卢本-4G", 3, "192.168.130.22")]:
     conn.execute("INSERT INTO lines(site_id,name,alarm_keywords,nexthop_ip,priority,enabled) "
                  "VALUES(1,?,?,?,?,1)", (name, kw, nh, pri))
 # 一条规则 = 一个降级阶梯（targets_json 按顺序配置目标线路与各自命令）
@@ -54,7 +58,9 @@ conn.execute("INSERT INTO actions(site_id,name,device_id,match_type,match_keywor
 conn.commit()
 
 T_AIRTEL = "【ICMP中断】41.243.21.170-华刚卢本-Airtel"
+T_AIRTEL_LOSS = "【ICMP丢包】41.243.21.170-华刚卢本-Airtel"
 T_VODA = "【ICMP中断】41.243.21.170-华刚卢本-Vodacom"
+T_VODA_LOSS = "【ICMP丢包】41.243.21.170-华刚卢本-Vodacom"
 T_4G = "【ICMP中断】41.243.21.170-华刚卢本-4G"
 
 
@@ -62,7 +68,7 @@ def fake_alarms(titles):
     """titles: 当前 AIOps 中"在告警"的告警标题集合；
     线路关键字(gs)命中任一标题 → 该线路有活跃告警。"""
     def q(conn, gs_kw):
-        hit = [t for t in titles if all(w.lower() in t.lower() for w in gs_kw.split(",") if w.strip())]
+        hit = [t for t in titles if app._kw_match(gs_kw, t)]
         return {"pending": len(hit), "handling": 0, "titles": hit[:3],
                 "requests": ["mock://?gs=" + gs_kw], "raw": "", "gs_label": gs_kw}
     app.query_line_active = q
@@ -70,6 +76,57 @@ def fake_alarms(titles):
 
 def steps_of(plan):
     return {s["line"]: s["status"] for s in plan["steps"]}
+
+
+def test_alarm_keywords_or():
+    assert app._kw_match("【ICMP丢包】拉米卡-Airtel,【ICMP中断】拉米卡-Airtel",
+                         "【ICMP中断】拉米卡-Airtel")
+    assert app._kw_match("【ICMP丢包】拉米卡-Airtel，【ICMP中断】拉米卡-Airtel",
+                         "【ICMP丢包】拉米卡-Airtel")
+    assert not app._kw_match("【ICMP丢包】拉米卡-Airtel,【ICMP中断】拉米卡-Airtel",
+                             "【ICMP中断】拉米卡-Vodacom")
+    fake_alarms([])
+    p = app.plan_switch(conn, T_AIRTEL_LOSS)
+    assert p["allow"] and p["fault_lines"] == ["Airtel"], p
+    fake_alarms([T_VODA_LOSS])
+    p = app.plan_switch(conn, T_AIRTEL)
+    assert p["allow"] and p["target_line"] == "4G" and steps_of(p)["Vodacom"] == "active", p
+    old = conn.execute("SELECT match_keywords FROM actions WHERE id=?", (RULE,)).fetchone()[0]
+    conn.execute("UPDATE actions SET match_keywords=? WHERE id=?",
+                 (T_AIRTEL + "," + T_AIRTEL_LOSS, RULE))
+    conn.commit()
+    try:
+        assert app.match_actions(conn, T_AIRTEL_LOSS)
+        assert app.match_actions(conn, T_AIRTEL)
+        assert not app.match_actions(conn, T_VODA)
+    finally:
+        conn.execute("UPDATE actions SET match_keywords=? WHERE id=?", (old, RULE))
+        conn.commit()
+    print("PASS 告警关键词：线路和规则均为逗号分隔的或关系")
+
+
+def test_aiops_query_each_keyword():
+    app.kv_set(conn, "aiops_token", "test-token")
+    app.kv_set(conn, "aiops_url", "http://example.test/alarms")
+    calls = []
+
+    def fake_urlopen(req, timeout=0):
+        query = parse_qs(urlparse(req.full_url).query)
+        word = query["gs"][0]
+        status = next(x["search"][0] for x in json.loads(query["search_unit_list"][0])
+                      if x["attr"] == "status")
+        calls.append((word, status))
+        count = int(word == T_VODA_LOSS and status == 1)
+        payload = {"code": 0, "data": {"count": str(count),
+                   "list": [{"alarm_title": T_VODA_LOSS}] if count else []}}
+        return io.BytesIO(json.dumps(payload).encode())
+
+    with patch("urllib.request.urlopen", fake_urlopen):
+        q = REAL_QUERY_LINE_ACTIVE(conn, T_VODA + "，" + T_VODA_LOSS)
+    assert calls == [(T_VODA, 0), (T_VODA, 1), (T_VODA_LOSS, 0), (T_VODA_LOSS, 1)]
+    assert q["pending"] == 0 and q["handling"] == 1 and q["titles"] == [T_VODA_LOSS], q
+    assert len(q["requests"]) == 4
+    print("PASS AIOps 活跃告警：逐个关键词查询，任一命中则线路不健康")
 
 
 def test_only_fault_line_active():
@@ -131,7 +188,7 @@ def test_line_without_matching_action():
     """4G 线路告警只命中线路关键词时，不得借用 Airtel 的切换规则。"""
     old = conn.execute("SELECT match_keywords FROM actions WHERE id=?", (RULE,)).fetchone()[0]
     conn.execute("UPDATE actions SET match_keywords=? WHERE id=?",
-                 ("41.243.21.170,Airtel", RULE))
+                 (T_AIRTEL + "," + T_AIRTEL_LOSS, RULE))
     conn.commit()
     try:
         fake_alarms([])
@@ -172,7 +229,7 @@ def test_multi_site_conflict():
     fake_alarms([])
     conn.execute("INSERT INTO sites(name) VALUES('第二站点')")
     conn.execute("INSERT INTO lines(site_id,name,alarm_keywords,priority,enabled) "
-                 "VALUES(3,'专线A','41.243.21.170,Airtel',1,1)")
+                 "VALUES(3,'专线A',?,1,1)", (T_AIRTEL,))
     conn.commit()
     p = app.plan_switch(conn, T_AIRTEL)
     assert p["matched"] and not p["allow"] and "多个站点" in p["reason"], p
@@ -390,6 +447,8 @@ def test_copy_resources():
 
 
 if __name__ == "__main__":
+    test_alarm_keywords_or()
+    test_aiops_query_each_keyword()
     test_only_fault_line_active()
     test_degrade_to_third_line()
     test_all_lines_active()
