@@ -61,8 +61,8 @@ Body:    {"title": "告警标题", "source": "系统A"}  # source 填调用方�
 {"matched": false, "rule_matched": false, "task_id": null, "executed": false, "skip_reason_code": "unmatched", "result": {"status": "skipped"}}
 ```
 
-`matched` 表示识别到站点线路或动作；`rule_matched` 专指命中启用的切换规则。
-仅识别线路、没有命中规则时，前者为 `true`，后者为 `false`，不会切线。
+`matched` 表示识别到站点线路或动作；`rule_matched` 表示满足启用切换规则的匹配条件。
+站点已配置线路时，告警标题必须同时命中该站点的完整线路关键字和启用动作的规则关键字，`rule_matched` 才为 `true`。只命中其中一项时不会切线。
 `dry_run: true` 是演练，即使任务状态为 `success` 也没有下发切换命令。
 
 每次带有效标题的 `/api/alert` 回调（包括未命中）都会写入「监控中心 → 告警记录」；

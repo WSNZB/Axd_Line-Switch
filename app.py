@@ -304,6 +304,20 @@ def init_db():
                     c.execute("UPDATE exec_logs SET site_name=? WHERE id=?",
                               (match.group(1), row["id"]))
                     break
+    # 旧版把“动作关键词命中、但站点线路关键词未命中”误记为规则已命中。
+    for row in c.execute(
+            "SELECT id,response_json FROM alert_receipts WHERE rule_matched=1 "
+            "AND reason LIKE '%已配置线路，但告警标题未匹配到任何线路的告警关键字%'").fetchall():
+        try:
+            response = json.loads(row["response_json"])
+            if isinstance(response, dict):
+                response["rule_matched"] = False
+                c.execute("UPDATE alert_receipts SET rule_matched=0,response_json=? WHERE id=?",
+                          (json.dumps(response, ensure_ascii=False), row["id"]))
+                continue
+        except (TypeError, ValueError):
+            pass
+        c.execute("UPDATE alert_receipts SET rule_matched=0 WHERE id=?", (row["id"],))
     # 默认设置
     for k, v in [("web_password", "admin123"),
                  ("api_token", "lsk-" + uuid.uuid4().hex[:24]),
@@ -537,7 +551,7 @@ def plan_switch(conn, title, site_id=None):
         m0 = md[0]
         act = m0["action"]
         srow = conn.execute("SELECT name FROM sites WHERE id=?", (act["site_id"] or 0,)).fetchone()
-        out.update({"matched": True, "rule_matched": True,
+        out.update({"matched": True, "rule_matched": False,
                     "site_id": act["site_id"], "site_name": srow["name"] if srow else ""})
         if site_lines(conn, act["site_id"]):
             out["reason"] = ("站点「%s」已配置线路，但告警标题未匹配到任何线路的告警关键字，"
@@ -545,7 +559,8 @@ def plan_switch(conn, title, site_id=None):
             out["note"] = "线路关键字未命中标题"
             return out
         tg = m0["targets"][0] if m0["targets"] else None
-        out.update({"legacy": True, "allow": True, "action": act, "target": tg,
+        out.update({"legacy": True, "rule_matched": True, "allow": True,
+                    "action": act, "target": tg,
                     "target_line": (tg or {}).get("line", ""),
                     "note": "站点未配置线路，按动作匹配直接执行（不做多线路降级判定）"})
         out["steps"] = [{"line": out["target_line"] or "(动作默认)", "status": "legacy"}]

@@ -179,8 +179,25 @@ def test_title_not_match_line():
     """标题命中动作关键词、但匹配不到站点任何线路关键字 → 提示检查线路配置，不切换"""
     fake_alarms([])
     p = app.plan_switch(conn, "【BGP邻居中断】41.243.21.170")
-    assert p["matched"] and not p["allow"], p
+    assert p["matched"] and not p["rule_matched"] and not p["allow"], p
     assert "未匹配到任何线路的告警关键字" in p["reason"], p["reason"]
+    # 截图场景：动作规则用较宽的站点关键词，但线路只接受完整 ICMP 告警标题。
+    old_rule = conn.execute("SELECT match_keywords FROM actions WHERE id=?", (RULE,)).fetchone()[0]
+    old_line = conn.execute("SELECT alarm_keywords FROM lines WHERE site_id=1 AND name='Airtel'").fetchone()[0]
+    line_title = "拉米卡专线-Airtel专线（刚果金地址）"
+    conn.execute("UPDATE actions SET match_keywords=? WHERE id=?", (line_title, RULE))
+    conn.execute("UPDATE lines SET alarm_keywords=? WHERE site_id=1 AND name='Airtel'",
+                 ("【ICMP丢包】" + line_title + ",【ICMP中断】" + line_title,))
+    conn.commit()
+    try:
+        p = app.plan_switch(conn, "【随便】" + line_title)
+        assert p["matched"] and not p["rule_matched"] and not p["allow"], p
+        assert p["fault_lines"] == [] and "未匹配到任何线路的告警关键字" in p["reason"], p
+    finally:
+        conn.execute("UPDATE actions SET match_keywords=? WHERE id=?", (old_rule, RULE))
+        conn.execute("UPDATE lines SET alarm_keywords=? WHERE site_id=1 AND name='Airtel'",
+                     (old_line,))
+        conn.commit()
     print("PASS 场景5 站点已配线路但标题不匹配线路 → 不切换：%s" % p["reason"])
 
 

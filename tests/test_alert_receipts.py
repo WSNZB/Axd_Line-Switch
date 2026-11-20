@@ -132,6 +132,19 @@ with tempfile.TemporaryDirectory() as tmp:
         assert debug_receipts["items"][0]["source_kind"] == "debug"
         _, logs = call("GET", "/api/logs")
         assert logs[0]["trigger"] == "debug" and logs[0]["site_name"] == "测试站点"
+        # 动作关键词虽命中，站点线路完整关键词未命中时，记录应显示“切换规则未命中”。
+        conn = app.get_db()
+        conn.execute("UPDATE lines SET alarm_keywords='【ICMP中断】测试站点-4G' WHERE site_id=1")
+        conn.execute("INSERT INTO actions(site_id,name,match_type,match_keywords,enabled) "
+                     "VALUES(1,'宽泛动作','contains','测试站点-4G',1)")
+        conn.commit()
+        conn.close()
+        _, false_hit = call("POST", "/api/alert", {"title": "【随便】测试站点-4G"})
+        assert false_hit["matched"] and not false_hit["rule_matched"]
+        assert not false_hit["executed"] and false_hit["result"]["status"] == "skipped"
+        _, latest = call("GET", "/api/alert-receipts?limit=1")
+        assert latest["items"][0]["rule_matched"] == 0
+        assert json.loads(latest["items"][0]["response_json"])["rule_matched"] is False
         print("PASS 告警接收：未命中入库、响应统一、筛选分页、预检不入库")
     finally:
         server.shutdown()
@@ -166,12 +179,20 @@ with tempfile.TemporaryDirectory() as tmp:
     old.executemany("INSERT INTO alert_receipts(received_at,title,source,response_json) "
                     "VALUES('2026-11-19 20:00:00',?,?, '{}')",
                     [("旧业务", "api"), ("旧调试", "debug"), ("更旧记录", "unknown")])
+    old.execute("INSERT INTO alert_receipts(received_at,title,source,matched,rule_matched,"
+                "reason,response_json) VALUES('2026-11-20 10:39:08','【随便】测试站点-4G','api',1,1,?,?)",
+                ("站点「测试站点」已配置线路，但告警标题未匹配到任何线路的告警关键字，请检查站点线路配置",
+                 json.dumps({"matched": True, "rule_matched": True})))
     old.commit()
     old.close()
     app.init_db()
     check = app.get_db()
     assert [tuple(r) for r in check.execute(
-        "SELECT source,source_kind FROM alert_receipts ORDER BY id")] == [
+        "SELECT source,source_kind FROM alert_receipts ORDER BY id LIMIT 3")] == [
             ("", "api"), ("本系统调试", "debug"), ("", "unknown")]
+    repaired = check.execute("SELECT matched,rule_matched,response_json FROM alert_receipts "
+                             "WHERE title='【随便】测试站点-4G'").fetchone()
+    assert repaired["matched"] == 1 and repaired["rule_matched"] == 0
+    assert json.loads(repaired["response_json"])["rule_matched"] is False
     check.close()
     print("PASS 执行记录站点：无动作跳过记录与旧库迁移均显示命中站点")
