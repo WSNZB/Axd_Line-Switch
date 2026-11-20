@@ -43,6 +43,8 @@ systemctl status axd-line-switch  # 查看服务状态
 安装脚本默认以执行 `sudo` 的原用户运行服务；需要指定其他用户时，用
 `sudo LS_SERVICE_USER=用户名 ./install-systemd.sh`。该用户须能读取 `.env`、`app.py`，
 并能写入 SQLite 数据库及其所在目录（设置了 `LS_DB` 时也一样）。
+原服务若已由 root 运行且需沿用其文件权限，可显式使用
+`sudo LS_SERVICE_USER=root ./install-systemd.sh`。
 `./install-systemd.sh --dry-run` 可预览生成的 unit，不修改系统。
 
 以后统一使用 systemd 管理，不再执行 `./start.sh start`：

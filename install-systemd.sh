@@ -12,7 +12,8 @@ fail() { printf '错误：%s\n' "$*" >&2; exit 1; }
 
 [[ -n "$PYTHON_BIN" ]] || fail "找不到 python3"
 id "$RUN_USER" >/dev/null 2>&1 || fail "运行用户 $RUN_USER 不存在"
-[[ "$RUN_USER" != root ]] || fail "请通过 sudo 运行，或设置 LS_SERVICE_USER 为非 root 用户"
+[[ "$RUN_USER" != root || "${LS_SERVICE_USER:-}" == root ]] ||
+  fail "默认不以 root 运行；如需沿用现有 root 进程，请显式设置 LS_SERVICE_USER=root"
 [[ "$APP_DIR" != *[[:space:]%]* && "$PYTHON_BIN" != *[[:space:]%]* ]] ||
   fail "项目或 Python 路径不能包含空格、百分号"
 
