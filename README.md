@@ -46,8 +46,12 @@ AIOps 告警动作中配置 HTTP 回调：
 ```
 POST http://<本机IP>:8090/api/alert
 Header:  X-API-Token: <在"全局设置"中查看>
-Body:    {"title": "告警标题"}       # 兼容 alarm_title / name 字段；支持 dry_run:true 演练
+Body:    {"title": "告警标题", "source": "系统A"}  # source 填调用方系统名称
 ```
+
+不同业务系统在 `source` 中分别填写自己的名称，例如 `系统A`、`系统B`。
+告警记录会按该名称显示和筛选来源。`source` 可省略；省略时显示“未标识业务系统”。
+`title` 兼容 `alarm_title` / `name` 字段；支持 `dry_run:true` 演练。
 
 响应示例（HTTP 200 仅表示回调已接收；成功切线以 `result.status == "success"` 为准）：
 
@@ -266,7 +270,7 @@ Vodacom 下一跳IP `192.168.130.2` / Airtel `192.168.130.10` / 4G `192.168.130.
 |------|------|------|
 | POST | `/api/alert` | 告警入口（X-API-Token 鉴权） |
 | GET | `/api/task/{id}` | 查任务状态（供回调方轮询） |
-| GET | `/api/alert-receipts` | 告警记录，支持 `page`、`limit`、`q`、`rule_matched` 筛选 |
+| GET | `/api/alert-receipts` | 告警记录，支持 `page`、`limit`、`q`、`rule_matched`、`source` 筛选；`source=name:系统A` 筛指定系统 |
 | POST/PUT/DELETE | `/api/actions[/{id}]` | 切换动作 CRUD |
 | POST/PUT/DELETE | `/api/devices[/{id}]` | 设备 CRUD（密码留空=不修改） |
 | POST/PUT/DELETE | `/api/sites[/{id}]` | 站点 CRUD |

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 from urllib.error import HTTPError
+from urllib.parse import quote
 from urllib.request import Request, urlopen
 
 BASE = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -38,7 +39,7 @@ with tempfile.TemporaryDirectory() as tmp:
             return response.status, json.load(response)
 
     try:
-        code, unmatched = call("POST", "/api/alert", {"title": "测试用告警，无需处理"},
+        code, unmatched = call("POST", "/api/alert", {"title": "测试用告警，无需处理", "source": "系统A"},
                                {"User-Agent": "AIOps/1.0"})
         assert code == 200
         assert unmatched["matched"] is False and unmatched["rule_matched"] is False
@@ -46,7 +47,7 @@ with tempfile.TemporaryDirectory() as tmp:
         assert unmatched["task_id"] is None and unmatched["result"]["status"] == "skipped"
         assert unmatched["skip_reason_code"] == "unmatched"
 
-        code, only_line = call("POST", "/api/alert", {"title": "测试站点-4G 中断"})
+        code, only_line = call("POST", "/api/alert", {"title": "测试站点-4G 中断", "source": "系统B"})
         assert code == 200 and only_line["matched"] is True
         assert only_line["rule_matched"] is False
         assert only_line["executed"] is False and only_line["result"]["status"] == "skipped"
@@ -58,9 +59,13 @@ with tempfile.TemporaryDirectory() as tmp:
         _, listing = call("GET", "/api/alert-receipts?limit=1&page=1")
         assert listing["total"] == 2 and len(listing["items"]) == 1
         assert listing["items"][0]["title"] == "测试站点-4G 中断"
+        assert listing["items"][0]["source"] == "系统B"
+        assert listing["sources"] == ["系统A", "系统B"]
         _, api_receipts = call("GET", "/api/alert-receipts?source=api")
         assert api_receipts["total"] == 2
-        assert next(r for r in api_receipts["items"] if r["title"] == unmatched["title"])["user_agent"] == "AIOps/1.0"
+        assert all(r["source_kind"] == "api" for r in api_receipts["items"])
+        _, system_a = call("GET", "/api/alert-receipts?source=" + quote("name:系统A"))
+        assert system_a["total"] == 1 and system_a["items"][0]["title"] == unmatched["title"]
         _, filtered = call("GET", "/api/alert-receipts?rule_matched=0&q=%E6%97%A0%E9%9C%80")
         assert filtered["total"] == 1
         assert filtered["items"][0]["title"] == unmatched["title"]
@@ -76,6 +81,11 @@ with tempfile.TemporaryDirectory() as tmp:
         try:
             call("POST", "/api/alert", {"title": ""})
             raise AssertionError("空标题应返回 400")
+        except HTTPError as error:
+            assert error.code == 400
+        try:
+            call("POST", "/api/alert", {"title": "无效来源", "source": ["系统A"]})
+            raise AssertionError("非字符串来源应返回 400")
         except HTTPError as error:
             assert error.code == 400
         _, listing = call("GET", "/api/alert-receipts")
@@ -94,6 +104,8 @@ with tempfile.TemporaryDirectory() as tmp:
         assert queued["task_id"] and queued["result"]["status"] == "running"
         _, matched = call("GET", "/api/alert-receipts?rule_matched=1")
         assert matched["total"] == 1 and matched["items"][0]["task_status"] == "running"
+        _, unlabeled = call("GET", "/api/alert-receipts?source=unlabeled")
+        assert unlabeled["total"] == 1 and unlabeled["items"][0]["title"] == queued["title"]
         conn = app.get_db()
         conn.execute("UPDATE exec_logs SET status='success' WHERE id=?", (queued["task_id"],))
         conn.commit()
@@ -102,19 +114,22 @@ with tempfile.TemporaryDirectory() as tmp:
         assert matched["items"][0]["task_status"] == "success"
 
         # API Token 不能伪装成页面调试；只有 Web 会话提交的调试标记才被采信。
-        call("POST", "/api/alert", {"title": "外部标记调试", "source": "debug"})
+        call("POST", "/api/alert", {"title": "外部标记调试", "source": "系统B",
+                                       "internal_debug": True})
         _, api_receipts = call("GET", "/api/alert-receipts?source=api")
         assert api_receipts["total"] == 4
+        assert api_receipts["items"][0]["source"] == "系统B"
         login = Request(root + "/api/login", method="POST",
                         data=json.dumps({"password": "admin123"}).encode(),
                         headers={"Content-Type": "application/json"})
         with urlopen(login, timeout=5) as response:
             cookie = response.headers["Set-Cookie"].split(";", 1)[0]
-        call("POST", "/api/alert", {"title": "测试站点-4G 中断", "source": "debug"},
+        call("POST", "/api/alert", {"title": "测试站点-4G 中断", "internal_debug": True},
              {"Cookie": cookie, "User-Agent": "Browser-Debug/1.0"})
         _, debug_receipts = call("GET", "/api/alert-receipts?source=debug")
         assert debug_receipts["total"] == 1
-        assert debug_receipts["items"][0]["user_agent"] == "Browser-Debug/1.0"
+        assert debug_receipts["items"][0]["source"] == "本系统调试"
+        assert debug_receipts["items"][0]["source_kind"] == "debug"
         _, logs = call("GET", "/api/logs")
         assert logs[0]["trigger"] == "debug" and logs[0]["site_name"] == "测试站点"
         print("PASS 告警接收：未命中入库、响应统一、筛选分页、预检不入库")
@@ -139,6 +154,24 @@ with tempfile.TemporaryDirectory() as tmp:
     app.init_db()
     check = app.get_db()
     assert check.execute("SELECT site_name FROM exec_logs WHERE id=1").fetchone()[0] == "拉米卡"
-    assert check.execute("SELECT source,user_agent FROM alert_receipts WHERE id=1").fetchone()[:] == ("unknown", "")
+    assert check.execute("SELECT source,source_kind FROM alert_receipts WHERE id=1").fetchone()[:] == ("", "unknown")
+    check.close()
+    # 上一版本的固定分类迁移到 source_kind，保留调试记录的标识。
+    app.LS_DB = os.path.join(tmp, "previous.db")
+    old = sqlite3.connect(app.LS_DB)
+    old.execute("CREATE TABLE alert_receipts(id INTEGER PRIMARY KEY, received_at TEXT, "
+                "title TEXT, source TEXT NOT NULL, user_agent TEXT, matched INTEGER, "
+                "rule_matched INTEGER, executed INTEGER, task_id INTEGER, "
+                "action_name TEXT, reason TEXT, response_json TEXT)")
+    old.executemany("INSERT INTO alert_receipts(received_at,title,source,response_json) "
+                    "VALUES('2026-11-19 20:00:00',?,?, '{}')",
+                    [("旧业务", "api"), ("旧调试", "debug"), ("更旧记录", "unknown")])
+    old.commit()
+    old.close()
+    app.init_db()
+    check = app.get_db()
+    assert [tuple(r) for r in check.execute(
+        "SELECT source,source_kind FROM alert_receipts ORDER BY id")] == [
+            ("", "api"), ("本系统调试", "debug"), ("", "unknown")]
     check.close()
     print("PASS 执行记录站点：无动作跳过记录与旧库迁移均显示命中站点")

@@ -225,7 +225,8 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         received_at TEXT NOT NULL,
         title TEXT NOT NULL,
-        source TEXT NOT NULL DEFAULT 'unknown',
+        source TEXT NOT NULL DEFAULT '',
+        source_kind TEXT NOT NULL DEFAULT 'unknown',
         user_agent TEXT DEFAULT '',
         matched INTEGER NOT NULL DEFAULT 0,
         rule_matched INTEGER NOT NULL DEFAULT 0,
@@ -243,6 +244,7 @@ def init_db():
     """)
     # 兼容旧库：补列
     added_log_site_name = False
+    added_receipt_source_kind = False
     for tbl, col, ddl in [
         ("devices", "status_command", "TEXT DEFAULT 'display ip routing-table 0.0.0.0'"),
         ("devices", "current_regex", "TEXT DEFAULT ''"),
@@ -263,7 +265,8 @@ def init_db():
         ("lines", "nexthop_ip", "TEXT DEFAULT ''"),
         ("exec_steps", "raw_output", "TEXT DEFAULT ''"),
         ("alert_receipts", "rule_matched", "INTEGER NOT NULL DEFAULT 0"),
-        ("alert_receipts", "source", "TEXT NOT NULL DEFAULT 'unknown'"),
+        ("alert_receipts", "source", "TEXT NOT NULL DEFAULT ''"),
+        ("alert_receipts", "source_kind", "TEXT NOT NULL DEFAULT 'unknown'"),
         ("alert_receipts", "user_agent", "TEXT DEFAULT ''"),
     ]:
         cols = [r[1] for r in c.execute("PRAGMA table_info(%s)" % tbl)]
@@ -271,6 +274,15 @@ def init_db():
             c.execute("ALTER TABLE %s ADD COLUMN %s %s" % (tbl, col, ddl))
             if (tbl, col) == ("exec_logs", "site_name"):
                 added_log_site_name = True
+            if (tbl, col) == ("alert_receipts", "source_kind"):
+                added_receipt_source_kind = True
+    if added_receipt_source_kind:
+        # 上一版本的 source 是来源类别，迁移后 source 专用于调用方传入的系统名称。
+        c.execute("UPDATE alert_receipts SET source_kind=source "
+                  "WHERE source IN ('api','debug','unknown')")
+        c.execute("UPDATE alert_receipts SET source=CASE WHEN source='debug' "
+                  "THEN '本系统调试' ELSE '' END "
+                  "WHERE source IN ('api','debug','unknown')")
     if added_log_site_name:
         # 旧执行记录靠动作反查站点；无动作的跳过记录需从当时的判定过程恢复。
         c.execute("UPDATE exec_logs SET site_name=COALESCE(("
@@ -1546,16 +1558,17 @@ def exec_result_of(conn, log_id):
             "timeout": st == "running"}
 
 
-def save_alert_receipt(conn, response, source="api", user_agent=""):
+def save_alert_receipt(conn, response, source="", source_kind="api", user_agent=""):
     """保存每次有效告警回调的判定结果，独立于设备执行记录。"""
     decision = response.get("decision") or {}
     reason = (response.get("skip_reason") or (response.get("result") or {}).get("reason")
               or decision.get("reason") or "")
     action = response.get("action") or {}
     cur = conn.execute(
-        "INSERT INTO alert_receipts(received_at,title,source,user_agent,matched,rule_matched,"
-        "executed,task_id,action_name,reason,response_json) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-        (now(), response["title"], source, user_agent[:512], int(bool(response.get("matched"))),
+        "INSERT INTO alert_receipts(received_at,title,source,source_kind,user_agent,matched,rule_matched,"
+        "executed,task_id,action_name,reason,response_json) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+        (now(), response["title"], source, source_kind, user_agent[:512],
+         int(bool(response.get("matched"))),
          int(bool(response.get("rule_matched"))),
          int(bool(response.get("executed"))), response.get("task_id"),
          action.get("name") or "", reason, json.dumps(response, ensure_ascii=False)))
@@ -1842,16 +1855,24 @@ class Handler(BaseHTTPRequestHandler):
                     conditions.append("r.rule_matched=?")
                     params.append(int(match_filter))
                 if source_filter in ("api", "debug", "unknown"):
-                    conditions.append("r.source=?")
+                    conditions.append("r.source_kind=?")
                     params.append(source_filter)
+                elif source_filter == "unlabeled":
+                    conditions.append("r.source_kind='api' AND r.source=''")
+                elif source_filter.startswith("name:"):
+                    conditions.append("r.source_kind='api' AND r.source=?")
+                    params.append(source_filter[5:])
                 where = " WHERE " + " AND ".join(conditions) if conditions else ""
                 total = conn.execute("SELECT COUNT(*) FROM alert_receipts r" + where, params).fetchone()[0]
                 rows = conn.execute(
                     "SELECT r.*, e.status AS task_status, e.error AS task_error "
                     "FROM alert_receipts r LEFT JOIN exec_logs e ON e.id=r.task_id" + where +
                     " ORDER BY r.id DESC LIMIT ? OFFSET ?", params + [limit, (page - 1) * limit]).fetchall()
+                sources = [r[0] for r in conn.execute(
+                    "SELECT DISTINCT source FROM alert_receipts "
+                    "WHERE source_kind='api' AND source<>'' ORDER BY source COLLATE NOCASE")]
                 return self._send_json({"total": total, "page": page, "limit": limit,
-                                        "items": [dict(r) for r in rows]})
+                                        "sources": sources, "items": [dict(r) for r in rows]})
             if path == "/api/logs":
                 limit = int((qs.get("limit") or ["50"])[0])
                 limit = max(1, min(limit, 300))
@@ -1928,8 +1949,14 @@ class Handler(BaseHTTPRequestHandler):
                 copied = copy_device(conn, int(m.group(1)))
                 return self._send_json(copied if copied else {"error": "设备不存在"}, 200 if copied else 404)
             if path == "/api/alert":
-                receipt_source = ("debug" if body.get("source") == "debug"
-                                  and self._web_authenticated() else "api")
+                source = body.get("source", "")
+                if not isinstance(source, str) or len(source) > 80:
+                    return self._send_json({"error": "来源 source 必须是长度不超过 80 的字符串"}, 400)
+                source = source.strip()
+                receipt_kind = ("debug" if body.get("internal_debug") is True
+                                and self._web_authenticated() else "api")
+                if receipt_kind == "debug":
+                    source = "本系统调试"
                 user_agent = self.headers.get("User-Agent") or ""
                 title = (body.get("title") or body.get("alarm_title") or body.get("name")
                          or (parse_qs(parsed.query).get("title") or [""])[0]).strip()
@@ -1951,7 +1978,7 @@ class Handler(BaseHTTPRequestHandler):
                                 "skip_reason": reason, "skip_reason_code": "unmatched",
                                 "result": {"status": "skipped", "before_line": "",
                                            "after_line": "", "target_line": "", "reason": reason}}
-                    save_alert_receipt(conn, response, receipt_source, user_agent)
+                    save_alert_receipt(conn, response, source, receipt_kind, user_agent)
                     return self._send_json(response)
                 act = plan["action"]
                 base = {"matched": True, "rule_matched": bool(plan.get("rule_matched")),
@@ -1999,7 +2026,7 @@ class Handler(BaseHTTPRequestHandler):
                         "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (act["id"] if act else None, act["name"] if act else "(无可用动作)",
                          plan.get("site_name") or "", _did, dev["name"] if dev else "",
-                         receipt_source, title, dry_run, 0, "skipped", ",".join(plan.get("fault_lines") or []),
+                         receipt_kind, title, dry_run, 0, "skipped", ",".join(plan.get("fault_lines") or []),
                          (reason + " | " + plan.get("note", "")), plan.get("target_line") or "",
                          now(), now(), json.dumps(init_tl, ensure_ascii=False)))
                     conn.commit()
@@ -2007,11 +2034,11 @@ class Handler(BaseHTTPRequestHandler):
                                  "skip_reason_code": "no_target_line",
                                  "result": {"status": "skipped", "before_line": "", "after_line": "",
                                             "target_line": "", "reason": reason}})
-                    save_alert_receipt(conn, base, receipt_source, user_agent)
+                    save_alert_receipt(conn, base, source, receipt_kind, user_agent)
                     return self._send_json(base)
                 dev = conn.execute("SELECT name,host FROM devices WHERE id=?", (act["device_id"],)).fetchone()
                 base["device"] = dict(dev) if dev else None
-                log_id, skip = submit_action(conn, act, receipt_source, title, dry_run=dry_run,
+                log_id, skip = submit_action(conn, act, receipt_kind, title, dry_run=dry_run,
                                              source_line=",".join(plan.get("fault_lines") or []),
                                              decision_note=plan.get("note", ""), init_tl=init_tl,
                                              target_line=plan.get("target_line") or "")
@@ -2025,7 +2052,7 @@ class Handler(BaseHTTPRequestHandler):
                                       "reason": skip}
                 else:
                     base["executed"] = True
-                    receipt_id = save_alert_receipt(conn, base, receipt_source, user_agent)
+                    receipt_id = save_alert_receipt(conn, base, source, receipt_kind, user_agent)
                     # 同步等待执行结果（wait=0 时立即返回，仅带 task_id）
                     try:
                         wait_s = max(0, min(int(body.get("wait", 120)), 600))
@@ -2035,7 +2062,7 @@ class Handler(BaseHTTPRequestHandler):
                         base["result"] = wait_exec_result(conn, log_id, wait_s)
                         update_alert_receipt(conn, receipt_id, base)
                 if skip:
-                    save_alert_receipt(conn, base, receipt_source, user_agent)
+                    save_alert_receipt(conn, base, source, receipt_kind, user_agent)
                 return self._send_json(base)
             if path == "/api/logout":
                 return self._send_json({"ok": True}, headers={
@@ -2881,7 +2908,7 @@ details summary:hover{color:var(--primary)}
         <div class="flt-group">
           <input id="ar_kw" placeholder="搜索告警标题" oninput="AR_PAGE=1;clearTimeout(window.__arT);window.__arT=setTimeout(loadAlertReceipts,300)">
           <select id="ar_matched" onchange="AR_PAGE=1;loadAlertReceipts()"><option value="">全部回调</option><option value="0">未命中切换规则</option><option value="1">已命中切换规则</option></select>
-          <select id="ar_source" onchange="AR_PAGE=1;loadAlertReceipts()"><option value="">全部来源</option><option value="api">API 回调</option><option value="debug">本系统调试</option><option value="unknown">来源未知</option></select>
+          <select id="ar_source" onchange="AR_PAGE=1;loadAlertReceipts()"><option value="">全部来源</option><option value="api">全部业务系统</option><option value="debug">本系统调试</option><option value="unlabeled">未标识业务系统</option><option value="unknown">来源未知</option></select>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="loadAlertReceipts()">刷新</button>
       </div>
@@ -2977,7 +3004,7 @@ details summary:hover{color:var(--primary)}
         <div class="settings-intro"><p>管理登录凭据、告警接口和线路切换策略。</p></div>
         <div class="settings-form">
         <div class="kv"><label>Web 登录密码</label><div class="ctl"><input type="password" id="s_pwd" placeholder="留空不修改"></div></div>
-        <div class="kv"><label>API Token<span class="q" data-tip="AIOps 回调本系统时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;}&#10;出于安全默认隐藏；点「查看」需再次验证登录密码；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap;display:inline-flex;align-items:center;gap:8px"></span></div></div>
+        <div class="kv"><label>API Token<span class="q" data-tip="业务系统回调时携带 X-API-Token 请求头。&#10;回调接口：POST /api/alert，Body: {&quot;title&quot;:&quot;告警标题&quot;,&quot;source&quot;:&quot;系统A&quot;}&#10;source 填调用方系统名称；出于安全默认隐藏 Token，点「查看」需再次验证登录密码；留空=不修改，粘贴新值可整体重置。">?</span></label><div class="ctl"><input id="s_token" placeholder="留空不修改"><span id="token_hint" style="font-size:12px;color:var(--text-muted);white-space:nowrap;display:inline-flex;align-items:center;gap:8px"></span></div></div>
         <div class="kv"><label>全局冷却(秒)</label><div class="ctl"><input id="s_cd" type="number" style="max-width:220px"></div></div>
         <div class="kv"><label>AIOps 告警接口</label><div class="ctl"><input id="s_aiops_url"></div></div>
         <div class="kv"><label>AIOps Token</label><div class="ctl"><input id="s_aiops_tok" placeholder="留空不修改"></div></div>
@@ -3206,7 +3233,10 @@ function refresh(p){
 let AR_PAGE=1,AR_ROWS=[];
 const AR_STATUS={success:["切线成功","ok"],running:["执行中","info"],
   skipped:["未切换","gray"],verify_failed:["验证未过","warn"],failed:["执行失败","bad"]};
-const AR_SOURCE={api:["API 回调","info"],debug:["本系统调试","warn"],unknown:["来源未知","gray"]};
+function receiptSource(r){
+  if(r.source_kind==="debug")return ["本系统调试","warn"];
+  if(r.source)return [r.source,"info"];
+  return r.source_kind==="unknown"?["来源未知","gray"]:["未标识业务系统","gray"]}
 function receiptResult(r){
   if(!r.matched)return ["未命中","gray"];
   if(!r.executed)return ["未切换","warn"];
@@ -3218,15 +3248,19 @@ function loadAlertReceipts(){
   const q=encodeURIComponent($("ar_kw").value.trim());
   const matched=$("ar_matched").value;
   const source=$("ar_source").value;
-  api("GET","/api/alert-receipts?page="+AR_PAGE+"&limit=20&q="+q+"&rule_matched="+matched+"&source="+source).then(d=>{
+  api("GET","/api/alert-receipts?page="+AR_PAGE+"&limit=20&q="+q+"&rule_matched="+matched+"&source="+encodeURIComponent(source)).then(d=>{
     AR_ROWS=d.items||[];
+    const sourceSelect=$("ar_source");
+    sourceSelect.innerHTML='<option value="">全部来源</option><option value="api">全部业务系统</option><option value="debug">本系统调试</option><option value="unlabeled">未标识业务系统</option><option value="unknown">来源未知</option>'+
+      (d.sources||[]).map(name=>`<option value="name:${esc(name)}">${esc(name)}</option>`).join("");
+    sourceSelect.value=source;
     $("artb").innerHTML=AR_ROWS.length?AR_ROWS.map(r=>{
       const res=receiptResult(r);
       const reason=r.task_error||r.reason||"";
-      const src=AR_SOURCE[r.source]||AR_SOURCE.unknown;
+      const src=receiptSource(r);
       return `<tr class="clickable" onclick="showReceipt(${r.id})">
         <td class="mono">${esc(r.received_at)}</td>
-        <td><span class="tag ${src[1]}">${src[0]}</span></td>
+        <td><span class="tag ${src[1]}">${esc(src[0])}</span></td>
         <td class="cell1" title="${esc(r.title)}">${esc(r.title)}</td>
         <td><span class="tag ${r.rule_matched?'ok':'gray'}">${r.rule_matched?'已命中':'未命中'}</span></td>
         <td><span class="tag ${res[1]}">${res[0]}</span></td>
@@ -3241,15 +3275,14 @@ function showReceipt(id){
   const r=AR_ROWS.find(x=>x.id===id);if(!r)return;
   let saved={};try{saved=JSON.parse(r.response_json||"{}")}catch(e){}
   const res=receiptResult(r);
-  const src=AR_SOURCE[r.source]||AR_SOURCE.unknown;
+  const src=receiptSource(r);
   $("mReceiptTitle").textContent="告警详情 #"+id;
   $("mReceiptBody").innerHTML=`<div class="meta-grid receipt-meta">
     <div class="meta-item"><span class="meta-label">接收时间</span><span class="meta-value">${esc(r.received_at)}</span></div>
-    <div class="meta-item"><span class="meta-label">来源</span><span class="meta-value"><span class="tag ${src[1]}">${src[0]}</span></span></div>
+    <div class="meta-item"><span class="meta-label">来源</span><span class="meta-value"><span class="tag ${src[1]}">${esc(src[0])}</span></span></div>
     <div class="meta-item"><span class="meta-label">切换规则</span><span class="meta-value">${r.rule_matched?'已命中':'未命中'}</span></div>
     <div class="meta-item"><span class="meta-label">处理结果</span><span class="meta-value"><span class="tag ${res[1]}">${res[0]}</span></span></div>
-  </div><div style="margin:16px 0 8px;font-weight:600">User-Agent</div><div style="overflow-wrap:anywhere">${esc(r.user_agent||'-')}</div>
-  <div style="margin:16px 0 8px;font-weight:600">告警标题</div><div style="overflow-wrap:anywhere">${esc(r.title)}</div>
+  </div><div style="margin:16px 0 8px;font-weight:600">告警标题</div><div style="overflow-wrap:anywhere">${esc(r.title)}</div>
   <div style="margin:16px 0 8px;font-weight:600">判定说明</div><div style="overflow-wrap:anywhere">${esc(r.task_error||r.reason||saved.note||'-')}</div>
   ${r.task_id?`<button class="btn btn-sm btn-secondary" style="margin-top:14px" onclick="closeM('mReceipt');showLog(${r.task_id})">查看执行任务 #${r.task_id}</button>`:''}
   <div style="margin:20px 0 8px;font-weight:600">回调响应</div>
@@ -3829,7 +3862,7 @@ function replayRun(){const v=$("rp_days").dataset.val||"7 天";const d=parseInt(
           r.unmatched_titles.map(x=>`<tr><td><b>${x.count}</b></td><td><span class="keyword-text">${esc(x.title)}</span></td></tr>`).join("")+`</tbody></table></div>`;
     $("rp_out").innerHTML=h})}
 function testAlert(){const t=$("t_title").value.trim();if(!t)return showToast("请输入标题",1);
-  api("POST","/api/alert",{title:t,source:"debug"}).then(r=>{const o=$("t_out");o.style.display="block";
+  api("POST","/api/alert",{title:t,internal_debug:true}).then(r=>{const o=$("t_out");o.style.display="block";
     o.textContent=JSON.stringify(r,null,2);loadLogs()})}
 
 // ---- 启动 ----
