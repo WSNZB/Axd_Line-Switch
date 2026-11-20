@@ -30,12 +30,35 @@ AIOps 告警 ──POST /api/alert {"title":"站点A-4G专线中断"}──▶ �
 
 ## 快速开始
 
+首次在 Linux 服务器上安装（已通过 `start.sh` 运行的实例会在安装时停止并迁移）：
+
 ```bash
 cp .env.example .env && vi .env   # 修改 LS_SECRET 为随机串（用于设备密码加密）
 chmod 600 .env
-./start.sh start                  # 后台守护: 日志 lineswitch.log, pid lineswitch.pid
-./start.sh status|stop|restart    # 其它命令；不带参数=前台运行
+chmod +x install-systemd.sh
+sudo ./install-systemd.sh         # 安装、启动并启用开机自启
+systemctl status axd-line-switch  # 查看服务状态
 ```
+
+安装脚本默认以执行 `sudo` 的原用户运行服务；需要指定其他用户时，用
+`sudo LS_SERVICE_USER=用户名 ./install-systemd.sh`。该用户须能读取 `.env`、`app.py`，
+并能写入 SQLite 数据库及其所在目录（设置了 `LS_DB` 时也一样）。
+`./install-systemd.sh --dry-run` 可预览生成的 unit，不修改系统。
+
+以后统一使用 systemd 管理，不再执行 `./start.sh start`：
+
+```bash
+sudo systemctl start axd-line-switch
+sudo systemctl stop axd-line-switch
+sudo systemctl restart axd-line-switch  # 更新代码或 .env 后
+systemctl status axd-line-switch
+journalctl -u axd-line-switch -f      # 查看实时日志
+systemctl is-enabled axd-line-switch # 确认开机自启
+```
+
+unit 文件安装在 `/etc/systemd/system/axd-line-switch.service`，以 Python 进程直接运行
+`app.py`，异常退出后自动重启；脚本会执行 `systemctl enable`，系统重启后自动启动。
+若项目目录、Python 路径或运行用户发生变化，重新运行安装脚本。
 
 访问 `http://<服务器IP>:8090`，默认登录密码 `admin123`（登录后请在"全局设置"修改）。
 

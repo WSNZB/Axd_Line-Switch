@@ -1,0 +1,20 @@
+[Unit]
+Description=Axd Line Switch service
+Wants=network-online.target
+After=network-online.target
+RequiresMountsFor=@APP_DIR@
+
+[Service]
+Type=simple
+User=@RUN_USER@
+WorkingDirectory=@APP_DIR@
+EnvironmentFile=@APP_DIR@/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=@PYTHON_BIN@ -u @APP_DIR@/app.py
+Restart=on-failure
+RestartSec=5s
+KillSignal=SIGINT
+TimeoutStopSec=30s
+
+[Install]
+WantedBy=multi-user.target

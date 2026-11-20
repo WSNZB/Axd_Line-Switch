@@ -1,9 +1,16 @@
 #!/bin/bash
-# Axd_Line_Switch 启动脚本: start.sh start|stop|restart|status (不带参数=前台运行)
+# 兼容旧启动方式；安装 systemd 后，管理命令交给 systemctl。
 DIR="$(cd "$(dirname "$0")" && pwd)"
 APP="$DIR/app.py"
 PID_FILE="$DIR/lineswitch.pid"
 LOG_FILE="$DIR/lineswitch.log"
+
+if [ -f /etc/systemd/system/axd-line-switch.service ] && command -v systemctl >/dev/null 2>&1; then
+    case "$1" in
+        start|stop|restart|status) exec systemctl --no-pager "$1" axd-line-switch.service ;;
+        "") echo "[lineswitch] 已由 systemd 管理，请使用 systemctl start|stop|restart|status axd-line-switch" >&2; exit 1 ;;
+    esac
+fi
 
 # 可选: 载入同级 .env (KEY=VALUE)
 if [ -f "$DIR/.env" ]; then
